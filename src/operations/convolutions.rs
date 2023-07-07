@@ -19,8 +19,9 @@ impl GaussianSmoothing{
 
         let specs = ShaderSpecs::new( (256, 1, 1) )
             .extend_defs(&[
-                ShaderDefVal::UInt("N".into(), N as u32),
+                ShaderDefVal::Int("N".into(), N as i32),
                 ShaderDefVal::UInt("LOCALSIZE".into(), 500),
+                ShaderDefVal::UInt("RINT".into(), 5),
             ]);
         let shader = PREPROCESSOR.process_by_key("1d_strides", specs).unwrap();
 

@@ -30,29 +30,33 @@ fn main(
 		return;
 	}
 	
-	var coords: array<u32, #N>;
+	var coords: array<i32, #N>;
 
-	var strides: array<u32, #N>;
-
-	var idx = global_id.x;
+	var strides: array<i32, #N>;
 
 	var next_stride = 1;
 
 	#for I in 0..N
-	strides[#N-#I-1] = next_stride;
-	next_stride *= pc.bounds[#I]
+	strides[#N - #I - 1] = next_stride;
+	next_stride *= i32(pc.bounds[#I]);
 
 	#endfor
 
+	var idx = i32(global_id.x);
 
 	#for I in 0..N
 	coords[#I] = idx / strides[#I];
 	idx = idx % strides[#I];
 
 	#endfor
-	
 
+	idx = i32(globa_id.x);
 	
+	var acc = 0.0;
+	
+	#for I in -RINT..RINT
+	acc += input[idx + #I] * kernel_func();
+	#endfor
 
 }
 
