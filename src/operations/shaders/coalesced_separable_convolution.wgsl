@@ -7,12 +7,7 @@
 
 
 struct PushConstants{
-    curdim: u32,
-	maxdim: u32,
-	
-	kernel_dims: i32,
-
-	sigma: f32,
+	#STRIDES
 }
 
 @group(0) @binding(0)
@@ -31,8 +26,8 @@ fn main(
 	@builtin(local_invocation_index) local_index: u32,
 ) {
 	let x = i32(global_id.x);
-	let y = i32(global_id.y);
-	let z = i32(global_id.z);
+	// let y = i32(global_id.y);
+	// let z = i32(global_id.z);
 
 	var stride_y: i32;
 	var stride_z: i32;
