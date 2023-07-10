@@ -54,7 +54,7 @@ fn main(
 	
 	var acc = 0.0;
 	
-	#for I in -RINT..RINT
+	#for I in -RINT..=RINT
 	acc += input[idx + #I] * kernel_func();
 	#endfor
 

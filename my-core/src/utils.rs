@@ -1,15 +1,20 @@
 use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
-use std::{rc::Rc, collections::HashMap};
+use std::{collections::HashMap, rc::Rc};
 use wgpu::{self, util::DeviceExt};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
 
-pub fn read_buffer<T: bytemuck::Pod>(device: &wgpu::Device, mappable_buffer: &wgpu::Buffer) -> Vec<T>{
+pub fn read_buffer<T: bytemuck::Pod>(
+    device: &wgpu::Device,
+    mappable_buffer: &wgpu::Buffer,
+) -> Vec<T> {
     let slice = mappable_buffer.slice(..);
     let (sender, receiver) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |res| { let _ = sender.send(res); });
+    slice.map_async(wgpu::MapMode::Read, move |res| {
+        let _ = sender.send(res);
+    });
     device.poll(wgpu::MaintainBase::Wait);
     receiver.recv().unwrap().unwrap();
     let view = slice.get_mapped_range();
@@ -20,21 +25,31 @@ pub fn read_buffer<T: bytemuck::Pod>(device: &wgpu::Device, mappable_buffer: &wg
     out
 }
 
-
-pub trait BindingGroup<'a>{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup;
+pub trait BindingGroup<'a> {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup;
 }
 
-impl<'a> BindingGroup<'a> for [(u32, &'a wgpu::Buffer)]{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup {
-        let entries = self.iter().map(|&(binding, buffer)|{
-            wgpu::BindGroupEntry{
+impl<'a> BindingGroup<'a> for [(u32, &'a wgpu::Buffer)] {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup {
+        let entries = self
+            .iter()
+            .map(|&(binding, buffer)| wgpu::BindGroupEntry {
                 binding,
                 resource: buffer.as_entire_binding(),
-            }
-        }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
-        device.create_bind_group(&wgpu::BindGroupDescriptor{
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label,
             layout,
             entries: entries.as_slice(),
@@ -42,16 +57,22 @@ impl<'a> BindingGroup<'a> for [(u32, &'a wgpu::Buffer)]{
     }
 }
 
-impl<'a, const N: usize> BindingGroup<'a> for [(u32, &'a wgpu::Buffer); N]{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup {
-        let entries = self.iter().map(|&(binding, buffer)|{
-            wgpu::BindGroupEntry{
+impl<'a, const N: usize> BindingGroup<'a> for [(u32, &'a wgpu::Buffer); N] {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup {
+        let entries = self
+            .iter()
+            .map(|&(binding, buffer)| wgpu::BindGroupEntry {
                 binding,
                 resource: buffer.as_entire_binding(),
-            }
-        }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
-        device.create_bind_group(&wgpu::BindGroupDescriptor{
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label,
             layout,
             entries: entries.as_slice(),
@@ -59,16 +80,22 @@ impl<'a, const N: usize> BindingGroup<'a> for [(u32, &'a wgpu::Buffer); N]{
     }
 }
 
-impl<'a> BindingGroup<'a> for HashMap<u32, &'a wgpu::Buffer>{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup {
-        let entries = self.iter().map(|(&binding, buffer)|{
-            wgpu::BindGroupEntry{
+impl<'a> BindingGroup<'a> for HashMap<u32, &'a wgpu::Buffer> {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup {
+        let entries = self
+            .iter()
+            .map(|(&binding, buffer)| wgpu::BindGroupEntry {
                 binding,
                 resource: buffer.as_entire_binding(),
-            }
-        }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
-        device.create_bind_group(&wgpu::BindGroupDescriptor{
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label,
             layout,
             entries: entries.as_slice(),
@@ -76,9 +103,14 @@ impl<'a> BindingGroup<'a> for HashMap<u32, &'a wgpu::Buffer>{
     }
 }
 
-impl<'a> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>]{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor{
+impl<'a> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>] {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label,
             layout,
             entries: self,
@@ -86,9 +118,14 @@ impl<'a> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>]{
     }
 }
 
-impl<'a, const N: usize> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>; N]{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor{
+impl<'a, const N: usize> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>; N] {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label,
             layout,
             entries: self,
@@ -96,35 +133,51 @@ impl<'a, const N: usize> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>; N]{
     }
 }
 
-
-impl<'a> BindingGroup<'a> for Vec<(u32, &'a wgpu::Buffer)>{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup {
+impl<'a> BindingGroup<'a> for Vec<(u32, &'a wgpu::Buffer)> {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup {
         self.as_slice().binding_group(device, layout, label)
     }
 }
 
-impl<'a> BindingGroup<'a> for Vec<wgpu::BindGroupEntry<'a>>{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup {
+impl<'a> BindingGroup<'a> for Vec<wgpu::BindGroupEntry<'a>> {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup {
         self.as_slice().binding_group(device, layout, label)
     }
 }
 
-impl<'a, T: BindingGroup<'a>> BindingGroup<'a> for &T{
-    fn binding_group(&self, device: &wgpu::Device, layout: &wgpu::BindGroupLayout, label: Option<&str>) -> wgpu::BindGroup {
+impl<'a, T: BindingGroup<'a>> BindingGroup<'a> for &T {
+    fn binding_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup {
         <T as BindingGroup>::binding_group(*self, device, layout, label)
     }
 }
 
-
-pub async fn default_device() -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError>{
+pub async fn default_device() -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
     let instance = wgpu::Instance::new(Default::default());
     let adapter = instance.request_adapter(&Default::default());
     let mut device_desc = wgpu::DeviceDescriptor::default();
     device_desc.limits.max_push_constant_size = 64;
-    device_desc.features = wgpu::Features::MAPPABLE_PRIMARY_BUFFERS
-        | wgpu::Features::PUSH_CONSTANTS;
-    adapter.await.ok_or(wgpu::RequestDeviceError)?
-        .request_device(&device_desc, None).await
+    device_desc.features =
+        wgpu::Features::MAPPABLE_PRIMARY_BUFFERS | wgpu::Features::PUSH_CONSTANTS;
+    adapter
+        .await
+        .ok_or(wgpu::RequestDeviceError)?
+        .request_device(&device_desc, None)
+        .await
 }
 
 pub unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
@@ -132,7 +185,7 @@ pub unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkgroupSize{
+pub struct WorkgroupSize {
     pub x: u32,
     pub y: u32,
     pub z: u32,
@@ -141,9 +194,9 @@ pub struct WorkgroupSize{
     pub z_name: String,
 }
 
-impl WorkgroupSize{
-    pub fn new(x: u32, y: u32, z: u32) -> Self{
-        Self{
+impl WorkgroupSize {
+    pub fn new(x: u32, y: u32, z: u32) -> Self {
+        Self {
             x,
             y,
             z,
@@ -154,18 +207,17 @@ impl WorkgroupSize{
     }
 }
 
-impl From<(u32, u32, u32)> for WorkgroupSize{
+impl From<(u32, u32, u32)> for WorkgroupSize {
     fn from(value: (u32, u32, u32)) -> Self {
         Self::new(value.0, value.1, value.2)
     }
 }
 
-impl From<[u32; 3]> for WorkgroupSize{
+impl From<[u32; 3]> for WorkgroupSize {
     fn from(value: [u32; 3]) -> Self {
         Self::new(value[0], value[1], value[2])
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub enum Dispatcher {
@@ -187,20 +239,24 @@ impl Dispatcher {
     }
 
     pub fn new_indirect(device: &wgpu::Device, default: wgpu::util::DispatchIndirect) -> Self {
-        let dispatcher = Rc::new(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: default.as_bytes(),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-        }));
+        let dispatcher = Rc::new(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: default.as_bytes(),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+            }),
+        );
 
-        let resetter = Rc::new(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: default.as_bytes(),
-            usage: wgpu::BufferUsages::COPY_SRC,
-        }));
+        let resetter = Rc::new(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: default.as_bytes(),
+                usage: wgpu::BufferUsages::COPY_SRC,
+            }),
+        );
 
         Self::Indirect {
             dispatcher,
@@ -231,18 +287,19 @@ pub struct FullComputePass {
     pub pipeline: Rc<NonBoundPipeline>,
 }
 
-
 impl FullComputePass {
     pub fn new<'a>(
         device: &wgpu::Device,
         pipeline: Rc<NonBoundPipeline>,
-        bindgroup: & impl BindingGroup<'a>,
-    ) -> Self{
+        bindgroup: &impl BindingGroup<'a>,
+    ) -> Self {
+        let bindgroup = bindgroup.binding_group(
+            device,
+            &pipeline.bind_group_layout,
+            pipeline.label.as_deref(),
+        );
 
-        
-        let bindgroup = bindgroup.binding_group(device, &pipeline.bind_group_layout, pipeline.label.as_deref());
-
-        Self{
+        Self {
             bindgroup,
             pipeline,
         }
@@ -325,9 +382,8 @@ pub static SHADER_BINDGROUP_INFER: Lazy<Regex> =
 pub fn infer_compute_bindgroup_layout(
     device: &wgpu::Device,
     source: &str,
-    label: Option<&str>
+    label: Option<&str>,
 ) -> wgpu::BindGroupLayout {
-
     let mut entries = Vec::new();
     for capture in SHADER_BINDGROUP_INFER.captures_iter(source) {
         let idx: u32 = capture
@@ -348,13 +404,12 @@ pub fn infer_compute_bindgroup_layout(
                 min_binding_size: None,
             },
             _ => {
-                let (storage, read_write) = ty.split_once(",")
-                    .expect(&ty_err());
+                let (storage, read_write) = ty.split_once(",").expect(&ty_err());
                 let read_write = read_write.trim();
-                if !(storage == "storage"){
+                if !(storage == "storage") {
                     panic!("{}", ty_err())
                 }
-                match read_write{
+                match read_write {
                     "read" => wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -365,7 +420,7 @@ pub fn infer_compute_bindgroup_layout(
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
-                    _ => panic!("{}", ty_err())
+                    _ => panic!("{}", ty_err()),
                 }
             }
         };
@@ -387,14 +442,14 @@ pub fn infer_compute_bindgroup_layout(
 }
 
 #[allow(unused_imports)]
-mod tests{
+mod tests {
 
-    use std::collections::HashMap;
-    use crate::shaderpreprocessor::*;
     use super::*;
+    use crate::shaderpreprocessor::*;
+    use std::collections::HashMap;
 
     #[test]
-    fn creation(){
+    fn creation() {
         // let first = Shader::from_wgsl(include_str!("test_shaders/first.wgsl"));
         // let second = Shader::from_wgsl(include_str!("test_shaders/second.wgsl"));
 
@@ -413,6 +468,5 @@ mod tests{
         // let shader = processor.process(&map[&"first".into()], &shaderdefs, &map).unwrap();
 
         // println!("***\n{}***", shader.get_source());
-        
     }
 }
