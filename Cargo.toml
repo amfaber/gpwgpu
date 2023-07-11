@@ -26,3 +26,6 @@ bincode = { workspace = true }
 
 [dev-dependencies]
 pollster = "*"
+
+[features]
+nightly = [ "macros/nightly" ]

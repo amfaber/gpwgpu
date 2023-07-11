@@ -90,7 +90,6 @@ impl ShaderDefVal {
 }
 
 #[derive(Debug, Clone)]
-// #[uuid = "d95bc916-6c55-4de3-9622-37e7b6969fda"]
 pub struct Shader {
     source: Source,
     import_path: Option<ShaderImport>,

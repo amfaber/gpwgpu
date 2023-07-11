@@ -1,11 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{time::{Duration, Instant}, collections::HashMap};
 
 use gpwgpu::{
     operations::{
         convolutions::GaussianSmoothing,
         reductions::{Reduce, ReductionType, StandardDeviationReduce},
     },
-    parser::{parse_tokens, parse_expr, Token},
+    parser::{parse_tokens, parse_expr, Token, process, Definition},
     shaderpreprocessor::{ShaderDefVal, ShaderProcessor, ShaderSpecs},
     utils::{default_device, inspect_buffers, read_buffer, FullComputePass},
 };
@@ -298,13 +298,21 @@ fn gaussian_smoothing() {
 }
 
 #[test]
-fn lexing() {
+fn parser_test() {
     // let data = include_str!("../src/operations/shaders/last_reduction.wgsl");
-    let data = "1 #if a == 0 + 1 * 5 / 7 {  #if adsasd{3}}";
-    // let data = "#if -a{}";
+    // let data = "1 #TEST #if a == 0 + 1 * 5 / 7 {  #if adsasd{3}}";
+    let data = "#for i in -RINT..=RINT{
+        #if idk == 3{
+            This gets printed if idk is 3
+        } #else {
+            this is the else block
+        }
+    }";
+
     let mut out = Vec::new();
+    let reps = 1e4 as usize;
     let now = std::time::Instant::now();
-    for _ in 0..1e3 as usize {
+    for _ in 0..reps{
         let (_input, output) = parse_tokens(data).unwrap();
         out = output;
     }
@@ -315,8 +323,61 @@ fn lexing() {
     dbg!(data.len());
     dbg!(ser.len());
     // dbg!(&ser);
-    let de: Vec<Token> = bincode::deserialize(&ser).unwrap();
+    let de_time = std::time::Instant::now();
+    for _ in 0..reps{
+        let de = bincode::deserialize::<Vec<Token>>(&ser).unwrap();
+    }
+    dbg!(de_time.elapsed());
+
+    print!("{}", process(out.clone(), |s|{
+        if s == "RINT"{
+            Some(Definition::Int(3))
+        } else if s == "idk"{
+            Some(Definition::Int(3))
+        } else {
+            None
+        }
+    }).unwrap());
+
+    println!("--------------------");
+
+    print!("{}", process(out, |s|{
+        if s == "RINT"{
+            Some(Definition::Int(3))
+        } else if s == "idk"{
+            Some(Definition::Int(4))
+        } else {
+            None
+        }
+    }).unwrap());
     // drop(ser);
     // dbg!(de);
     // dbg!(bincode::serialize(&out));
 }
+
+#[test]
+fn parser_macro(){
+    let now = std::time::Instant::now();
+    let mut hashmap = parse_shaders!("tests/parser_test_shaders");
+    let defs = HashMap::from([
+        ("WG_X", Definition::UInt(256)),
+        ("WG_Y", Definition::UInt(1)),
+        ("WG_Z", Definition::UInt(1)),
+        ("TEST", Definition::UInt(256)),
+        ("N_COL", Definition::UInt(256)),
+    ]);
+    let tokens = hashmap.remove("first").unwrap();
+    // let mut many_tokens = Vec::new();
+    // for _ in 0..1e6 as usize{
+    //     many_tokens.push(tokens.clone());
+    // }
+    // for tokens in many_tokens{
+    //     process(tokens.clone(), |s| defs.get(s).cloned()).unwrap();
+    // }
+    
+    for _ in 0..1e3 as usize{
+        process(tokens.clone(), |s| defs.get(s).cloned()).unwrap();
+    }
+    dbg!(now.elapsed());
+}
+
