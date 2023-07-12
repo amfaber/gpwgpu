@@ -1,21 +1,24 @@
 // use std::collections::HashMap;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::DirEntry, path::Path, borrow::Cow};
 
 // use crate::shaderpreprocessor::*;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_until},
-    character::complete::{alpha1, alphanumeric1, multispace0, char, alpha0, anychar},
+    bytes::complete::{take_till, take_until, is_not, take_while, take_until1, take_till1},
+    character::complete::{alpha1, alphanumeric1, multispace0, char, alpha0, anychar, space0, line_ending, multispace1},
     combinator::{cut, map, recognize, opt},
     error::{context, Error, ErrorKind, ParseError},
     multi::{many0, many0_count},
     number::complete::double,
-    sequence::{delimited, pair, preceded},
+    sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
 
-use crate::shaderpreprocessor::ShaderDefVal;
+use nom_supreme::tag::complete::tag;
+
+pub type NomError<'a> = nom_supreme::error::ErrorTree<&'a str>;
+
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize, Clone)]
 pub enum Expr<'a> {
@@ -46,7 +49,7 @@ pub enum Expr<'a> {
 pub enum EvalError {
     NumberInLogic,
     BoolInMath,
-    IdentNotFound,
+    IdentNotFound(String),
 }
 
 impl<'a> Expr<'a> {
@@ -66,7 +69,7 @@ impl<'a> Expr<'a> {
             Expr::Bool(b) => Expr::Bool(b),
             Expr::Num(n) => Expr::Num(n),
             Expr::Ident(name) => {
-                let expr = lookup(name).ok_or(EvalError::IdentNotFound)?;
+                let expr = lookup(name).ok_or_else(|| EvalError::IdentNotFound(name.to_string()))?;
                 let expr = if expr != self {
                     expr.simplify_internal(lookup)?
                 } else {
@@ -208,7 +211,7 @@ impl<'a> Expr<'a> {
     }
 }
 
-fn parse_bool(input: &str) -> IResult<&str, Expr> {
+fn parse_bool(input: &str) -> IResult<&str, Expr, NomError> {
     let (input, result) = preceded(
         multispace0,
         alt((
@@ -220,11 +223,11 @@ fn parse_bool(input: &str) -> IResult<&str, Expr> {
     Ok((input, result))
 }
 
-fn parse_num(input: &str) -> IResult<&str, Expr> {
+fn parse_num(input: &str) -> IResult<&str, Expr, NomError> {
     preceded(multispace0, map(double, Expr::Num))(input)
 }
 
-fn parse_ident(input: &str) -> IResult<&str, Expr> {
+fn parse_ident(input: &str) -> IResult<&str, Expr, NomError> {
     preceded(
         multispace0,
         map(
@@ -237,7 +240,7 @@ fn parse_ident(input: &str) -> IResult<&str, Expr> {
     )(input)
 }
 
-fn parse_parens(input: &str) -> IResult<&str, Expr> {
+fn parse_parens(input: &str) -> IResult<&str, Expr, NomError> {
     preceded(
         multispace0,
         delimited(
@@ -248,18 +251,18 @@ fn parse_parens(input: &str) -> IResult<&str, Expr> {
     )(input)
 }
 
-fn parse_neg(input: &str) -> IResult<&str, Expr> {
+fn parse_neg(input: &str) -> IResult<&str, Expr, NomError> {
     map(
         preceded(multispace0, pair(char('-'), parse_factor)),
         |(_, expr)| Expr::Neg(Box::new(expr)),
     )(input)
 }
 
-fn parse_factor(input: &str) -> IResult<&str, Expr> {
-    alt((parse_num, parse_neg, parse_bool, parse_ident, parse_parens))(input)
+fn parse_factor(input: &str) -> IResult<&str, Expr, NomError> {
+    alt((parse_bool, parse_ident, parse_num, parse_neg, parse_parens))(input)
 }
 
-fn parse_mul_div(input: &str) -> IResult<&str, Expr> {
+fn parse_mul_div(input: &str) -> IResult<&str, Expr, NomError> {
     let (input, init) = parse_factor(input)?;
     let (input, ops) = nom::multi::many0(pair(
         preceded(multispace0, alt((char('*'), char('/')))),
@@ -277,7 +280,7 @@ fn parse_mul_div(input: &str) -> IResult<&str, Expr> {
     Ok((input, expr))
 }
 
-fn parse_add_sub(input: &str) -> IResult<&str, Expr> {
+fn parse_add_sub(input: &str) -> IResult<&str, Expr, NomError> {
     let (input, init) = parse_mul_div(input)?;
     let (input, ops) = nom::multi::many0(pair(
         preceded(multispace0, alt((char('+'), char('-')))),
@@ -295,7 +298,7 @@ fn parse_add_sub(input: &str) -> IResult<&str, Expr> {
     Ok((input, expr))
 }
 
-fn parse_comparison(input: &str) -> IResult<&str, Expr> {
+fn parse_comparison(input: &str) -> IResult<&str, Expr, NomError> {
     let (input, initial) = parse_add_sub(input)?;
     
     let (input, mut comparisons) = many0(pair(
@@ -317,10 +320,11 @@ fn parse_comparison(input: &str) -> IResult<&str, Expr> {
         0 => return Ok((input, initial)),
         1 => comparisons.remove(0),
         _ => {
-            return Err(nom::Err::Failure(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::TooLarge,
-            )))
+            // return Err(nom::Err::Failure(nom::error::Error::new(
+            //     input,
+            //     nom::error::ErrorKind::TooLarge,
+            // )))
+            return Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::TooLarge)))
         }
     };
 
@@ -337,7 +341,7 @@ fn parse_comparison(input: &str) -> IResult<&str, Expr> {
     Ok((input, result))
 }
 
-fn parse_and(input: &str) -> IResult<&str, Expr> {
+fn parse_and(input: &str) -> IResult<&str, Expr, NomError> {
     let (input, init) = parse_comparison(input)?;
     let (input, ops) = nom::multi::many0(pair(
         preceded(multispace0, tag("&&")),
@@ -351,7 +355,7 @@ fn parse_and(input: &str) -> IResult<&str, Expr> {
     Ok((input, expr))
 }
 
-fn parse_or(input: &str) -> IResult<&str, Expr> {
+fn parse_or(input: &str) -> IResult<&str, Expr, NomError> {
     let (input, init) = parse_and(input)?;
     let (input, ops) = nom::multi::many0(pair(
         preceded(multispace0, tag("||")),
@@ -365,7 +369,7 @@ fn parse_or(input: &str) -> IResult<&str, Expr> {
     Ok((input, expr))
 }
 
-pub fn parse_expr(input: &str) -> IResult<&str, Expr> {
+pub fn parse_expr(input: &str) -> IResult<&str, Expr, NomError> {
     parse_or(input)
 }
 
@@ -373,7 +377,7 @@ pub fn parse_expr(input: &str) -> IResult<&str, Expr> {
 pub fn take_until_unbalanced(
     opening_bracket: char,
     closing_bracket: char,
-) -> impl Fn(&str) -> IResult<&str, &str> {
+) -> impl Fn(&str) -> IResult<&str, &str, NomError> {
     move |i: &str| {
         let mut index = 0;
         let mut bracket_counter = 0;
@@ -411,10 +415,14 @@ pub fn take_until_unbalanced(
         if bracket_counter == 0 {
             Ok(("", i))
         } else {
-            Err(nom::Err::Error(Error::from_error_kind(
+            Err(nom::Err::Error(NomError::from_error_kind(
                 i,
                 ErrorKind::TakeUntil,
             )))
+            // Err(nom::Err::Error(Error::from_error_kind(
+            //     i,
+            //     ErrorKind::TakeUntil,
+            // )))
         }
     }
 }
@@ -425,12 +433,6 @@ pub enum Range<'a> {
     Exclusive((Expr<'a>, Expr<'a>)),
     Inclusive((Expr<'a>, Expr<'a>)),
 }
-
-// impl<'a> Range<'a>{
-//     fn simplify(){
-        
-//     }
-// }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub enum Else<'a>{
@@ -462,16 +464,33 @@ pub enum Token<'a> {
     For(For<'a>)
 }
 
-fn parse_shader_code(input: &str) -> IResult<&str, Option<Token>> {
-    let (input, code) = take_till(|c| c == '#')(input)?;
-    if code.is_empty(){
+fn parse_comment(input: &str) -> IResult<&str, &str, NomError> {
+    recognize(
+        tuple((
+            tag("//"),
+            take_till(|c| c == '\n'),
+            opt(char('\n')),
+        ))
+    )(input)
+}
+
+fn parse_shader_code(input: &str) -> IResult<&str, Option<Token>, NomError> {
+    let (input, code) = recognize(many0(
+        alt((
+            take_till1(|c| c == '#' || c == '/'),
+            alt((parse_comment, tag("/"))),
+        )),
+    ))(input)?;
+    
+    if code.is_empty() {
         Ok((input, None))
     } else {
+        let code = trim_trailing_spaces(code);
         Ok((input, Some(Token::Code(code))))
     }
 }
 
-fn parse_ident_token(input: &str) -> IResult<&str, Token> {
+fn parse_ident_token(input: &str) -> IResult<&str, Token, NomError> {
     preceded(
         multispace0,
         map(
@@ -484,23 +503,52 @@ fn parse_ident_token(input: &str) -> IResult<&str, Token> {
     )(input)
 }
 
-fn parse_inner(input: &str) -> IResult<&str, Vec<Token>>{
+fn eat_newline(input: &str) -> IResult<&str, (), NomError>{
+    let (input, _) = opt(preceded(space0, line_ending))(input)?;
+    Ok((input, ()))
+}
+
+pub fn trim_trailing_spaces(input: &str) -> &str {
+    let mut chars = input.chars().rev();
+    let mut trailing_spaces = 0;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            ' ' | '\t' => trailing_spaces += 1,
+            '\n' => {
+                break
+            },
+            _ => {
+                trailing_spaces = 0;
+                break
+            }
+        }
+    }
+    &input[..input.len() - trailing_spaces]
+}
+
+fn parse_inner(input: &str) -> IResult<&str, Vec<Token>, NomError>{
     let (input, inner) = 
         cut(delimited(
             preceded(multispace0, tag("{")),
-            take_until_unbalanced('{', '}'),
+            preceded(eat_newline, take_until_unbalanced('{', '}')),
             tag("}"),
         ))(input)?;
+
+    let (inner, _) = eat_newline(trim_trailing_spaces(inner))?;
 
     let (_, inner_tokens) = parse_tokens(inner)?;
 
     Ok((input, inner_tokens))
 }
 
-fn parse_if(input: &str) -> IResult<&str, Token> {
+fn parse_if(input: &str) -> IResult<&str, Token, NomError> {
     let (input, _) = tag("if")(input)?;
 
     let (input, condition) = cut(parse_expr)(input)?;
+    
+    // FIXME unwrap on simplify error. This should be propagated.
+    // let condition = condition.simplify_without_ident()?;
     let condition = condition.simplify_without_ident().unwrap();
 
     let (input, inner_tokens) = cut(parse_inner)(input)?;
@@ -535,15 +583,9 @@ fn parse_if(input: &str) -> IResult<&str, Token> {
     ))
 }
 
-fn parse_range(input: &str) -> IResult<&str, Range> {
+fn parse_range(input: &str) -> IResult<&str, Range, NomError> {
 
-    let (input, first_expr_str) = cut(alt(
-        (
-            take_until("..="),
-            take_until("..")
-        )
-    ))(input)?;
-
+    let (input, first_expr_str) = cut(take_until(".."))(input)?;
     
     let (_, exp1) = parse_expr(first_expr_str)?;
     let (input, ty) = cut(alt((tag("..="), tag(".."))))(input)?;
@@ -558,17 +600,15 @@ fn parse_range(input: &str) -> IResult<&str, Range> {
     ))
 }
 
-fn parse_for(input: &str) -> IResult<&str, Token> {
+fn parse_for(input: &str) -> IResult<&str, Token, NomError> {
     let (input, _) = tag("for")(input)?;
 
-    let (input, ident) = cut(parse_ident_token)(input)?;
-
-    let Token::Ident(ident) = ident else { unreachable!() };
+    let (input, Token::Ident(ident)) = cut(parse_ident_token)(input)? else { unreachable!() };
 
     let (input, _) = cut(
         preceded(multispace0,
         tag("in"))
-        )(input)?;
+    )(input)?;
 
     let (input, range) = cut(parse_range)(input)?;
 
@@ -582,7 +622,7 @@ fn parse_for(input: &str) -> IResult<&str, Token> {
     Ok((input, result))
 }
 
-pub fn parse_tokens(mut input: &str) -> IResult<&str, Vec<Token>> {
+pub fn parse_tokens(mut input: &str) -> IResult<&str, Vec<Token>, NomError> {
     let mut out = Vec::new();
 
     // Consume initial shader code, up to the first "#"
@@ -604,6 +644,7 @@ pub fn parse_tokens(mut input: &str) -> IResult<&str, Vec<Token>> {
         out.push(token);
         let (new_input, code) = parse_shader_code(new_input)?;
         if let Some(code) = code{
+            
             out.push(code);
         }
         input = new_input;
@@ -627,49 +668,21 @@ impl<'a> From<EvalError> for ExpansionError<'a>{
 }
 
 #[derive(Clone, PartialEq, Debug)]
-// #[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub enum Definition {
+pub enum Definition<'def> {
     Bool(bool),
     Int(i32),
     UInt(u32),
-    Any(String),
+    Any(Cow<'def, str>),
     Float(f32),
-    // Bool(String, bool),
-    // Int(String, i32),
-    // UInt(String, u32),
-    // Any(String, String),
-    // Float(String, f32),
 }
 
-// impl std::hash::Hash for Definition {
-//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-//         match self {
-//             Self::Bool(name, _val) => {
-//                 name.hash(state)
-//                 // _val.hash(state)
-//             }
-//             Self::Int(name, _val) => {
-//                 name.hash(state)
-//                 // _val.hash(state)
-//             }
-//             Self::UInt(name, _val) => {
-//                 name.hash(state)
-//                 // _val.hash(state)
-//             }
-//             Self::Float(name, _val) => {
-//                 name.hash(state)
-//                 // _val.to_bits().hash(state)
-//             }
-//             Self::Any(name, _val) => {
-//                 name.hash(state)
-//                 // _val.hash(state)
-//             }
-//         }
-//     }
-// }
+impl<'def> Default for Definition<'def>{
+    fn default() -> Self {
+        Self::Any("".into())
+    }
+}
 
-
-impl From<Definition> for String {
+impl<'def> From<Definition<'def>> for String {
     fn from(value: Definition) -> Self {
         match value{
             Definition::Bool(def) => def.to_string(),
@@ -685,37 +698,30 @@ impl From<Definition> for String {
     }
 }
 
-// fn expr_lookup<'a>(
-//     lookup: &'a impl Fn(&str) -> Option<Definition>
-// ) -> impl Fn(&str) -> Option<Expr> + 'a{
-//     |s: &'a str| -> Option<Expr<'a>> {
-//         let def = lookup(s)?;
-//         match def{
-//             Definition::Bool(_, val) => Some(Expr::Bool(val)),
-//             Definition::Int(_, val) => Some(Expr::Num(val as f64)),
-//             Definition::UInt(_, val) => Some(Expr::Num(val as f64)),
-//             Definition::Float(_, val) => Some(Expr::Num(val as f64)),
-//             Definition::Any(_, _val) => panic!("Maybe need to deal with this at some point"),
-//         }
-//     }
-//     // todo!()
-// }
 
-fn process_if<'a>(
-    input: If<'a>,
-    result: &mut String,
-    lookup: &impl Fn(&str) -> Option<Definition>
-) -> Result<(), ExpansionError<'a>>{
-    let expr_lookup = |s: &'a str| -> Option<Expr<'a>> {
-        let def = lookup(s)?;
+// FIXME This could be a regular function but I can't be arsed figuring out the traits and lifetimes
+macro_rules! make_expr_lookup {
+    ($func:ident) => {
+    |s: &'a str| -> Option<Expr<'a>> {
+        let def = $func(s)?;
         match def{
             Definition::Bool(val) => Some(Expr::Bool(val)),
             Definition::Int(val) => Some(Expr::Num(val as f64)),
             Definition::UInt(val) => Some(Expr::Num(val as f64)),
             Definition::Float(val) => Some(Expr::Num(val as f64)),
+            // FIXME
             Definition::Any(_val) => panic!("Maybe need to deal with this at some point"),
         }
-    };
+    }
+    };
+}
+
+fn process_if<'a, 'def>(
+    input: If<'a>,
+    result: &mut String,
+    lookup: &impl Fn(&str) -> Option<Definition<'def>>
+) -> Result<(), ExpansionError<'a>>{
+    let expr_lookup = make_expr_lookup!(lookup);
 
     let If{
         condition,
@@ -742,10 +748,10 @@ fn process_if<'a>(
     }
 }
 
-fn process_for<'a>(
+fn process_for<'a, 'def>(
     input: For<'a>,
     result: &mut String,
-    lookup: &impl Fn(&str) -> Option<Definition>,
+    lookup: &impl Fn(&str) -> Option<Definition<'def>>,
 ) -> Result<(), ExpansionError<'a>>{
     let For{
         ident,
@@ -753,16 +759,7 @@ fn process_for<'a>(
         tokens,
     } = input;
 
-    let expr_lookup = |s: &'a str| -> Option<Expr<'a>> {
-        let def = lookup(s)?;
-        match def{
-            Definition::Bool(val) => Some(Expr::Bool(val)),
-            Definition::Int(val) => Some(Expr::Num(val as f64)),
-            Definition::UInt(val) => Some(Expr::Num(val as f64)),
-            Definition::Float(val) => Some(Expr::Num(val as f64)),
-            Definition::Any(l) => panic!("Maybe need to deal with this at some point"),
-        }
-    };
+    let expr_lookup = make_expr_lookup!(lookup);
 
     let range = match range{
         Range::Exclusive((expr1, expr2)) => {
@@ -788,29 +785,36 @@ fn process_for<'a>(
     };
 
     for val in iter{
-        let new_lookup = Box::new(|s: &str| -> Option<Definition>{
+        let new_lookup = Box::new(|s: &str| -> Option<Definition<'def>>{
             if s == ident{
                 Some(Definition::Int(val as i32))
             } else {
                 lookup(s)
             }
-        }) as Box<dyn Fn(&str) -> Option<Definition>>;
+        }) as Box<dyn Fn(&str) -> Option<Definition<'def>>>;
         process_internal(tokens.clone(), result, &new_lookup)?;
     }
     Ok(())
 }
 
-fn process_internal<'a>(
+fn process_internal<'a, 'def>(
     tokens: Vec<Token<'a>>,
     result: &mut String,
-    lookup: &impl Fn(&str) -> Option<Definition>
+    lookup: &impl Fn(&str) -> Option<Definition<'def>>
 ) -> Result<(), ExpansionError<'a>>{
     for token in tokens{
         match token{
             Token::Code(code) => result.push_str(code),
             Token::Ident(name) => {
                 let Some(shader_def) = lookup(name) else { return Err(ExpansionError::IdentNotFound(name))};
-                result.push_str(&String::from(shader_def));
+                let string = String::from(shader_def);
+                if let Ok((_, tokens)) = parse_tokens(&string){
+                    // FIXME the error needs to be propagated up from here, but currently wants
+                    // to reference the newly created string. Currently silently fails
+                    let _ = process_internal(tokens, result, lookup);
+                } else{
+                    result.push_str(&string);
+                }
             },
             Token::If(if_tokens) => {
                 process_if(if_tokens, result, lookup)?;
@@ -821,7 +825,7 @@ fn process_internal<'a>(
     Ok(())
 }
 
-pub fn process(tokens: Vec<Token>, lookup: impl Fn(&str) -> Option<Definition>) -> Result<String, ExpansionError>{
+pub fn process<'def>(tokens: Vec<Token>, lookup: impl Fn(&str) -> Option<Definition<'def>>) -> Result<String, ExpansionError>{
     let mut result = String::new();
     
     process_internal(

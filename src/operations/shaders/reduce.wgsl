@@ -3,18 +3,17 @@ struct PushConstants{
     length: u32,
 }
 
-#ifdef OUTPLACE
+#if OUTPLACE{
 @group(0) @binding(0)
 var<storage, read> input: array<f32>;
 
 @group(0) @binding(1)
 var<storage, read_write> output: array<f32>;
 
-#else
+} #else {
 @group(0) @binding(0)
 var<storage, read_write> input: array<f32>;
-
-#endif
+}
 
 var<push_constant> pc: PushConstants;
 
@@ -30,32 +29,32 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
     var datum = input[idx];
     var acc = datum;
     
-    #for I in 2u..UNROLL
-    idx = global_id.x + stride * (#I - 1u);
-    datum = input[idx];
-    #if NANPROTECT == true
-    if (bitcast<u32>(datum) != 4294967295u){
-        #OPERATION
+    #for I in 1..UNROLL-1{
+        idx = global_id.x + stride * u32(#I);
+        datum = input[idx];
+        #if NANPROTECT{
+            if (bitcast<u32>(datum) != 4294967295u){
+                #OPERATION
+            }
+        } #else {
+            #OPERATION
+        }
     }
-    #else
-    #OPERATION
-    #endif
-    #endfor
 
     idx = global_id.x + stride * (#UNROLL - 1u);
     datum = input[idx];
     
     if (idx < pc.length)
-    #if NANPROTECT == true
-    & (bitcast<u32>(datum) != 4294967295u
-    #endif
+    #if NANPROTECT{
+        & (bitcast<u32>(datum) != 4294967295u
+    }
     {
         #OPERATION
     }
 
-    #ifdef OUTPLACE
-    output[global_id.x] = acc;
-    #else
-    input[global_id.x] = acc;
-    #endif
+    #if OUTPLACE{
+        output[global_id.x] = acc;
+    } #else {
+        input[global_id.x] = acc;
+    }
 }

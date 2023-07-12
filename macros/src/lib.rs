@@ -7,7 +7,7 @@ use std::{
 };
 
 use my_core::{
-    shaderpreprocessor::{Shader, ShaderImport, ShaderProcessor},
+    shaderpreprocessor::{ShaderProcessor, validate_wgsl_file, parse_shader},
     *, parser::parse_tokens,
 };
 use proc_macro::TokenStream;
@@ -65,7 +65,7 @@ fn read_directory(
     };
 
     for file in read_dir {
-        let Some((name, file)) = ShaderProcessor::validate_file(file, full_path) else { continue };
+        let Some((name, file)) = validate_wgsl_file(file, full_path) else { continue };
         let mut abs = current_dir.clone();
         abs.push(file);
         let Ok(abs) = abs.into_os_string().into_string() else { continue };
@@ -80,7 +80,7 @@ fn read_directory(
 fn read_directory_parser(
     dir: &Dir,
     full_path: bool,
-    // prefix: &proc_macro2::TokenStream,
+    prefix: &proc_macro2::TokenStream,
 ) -> Result<ExprArray> {
     let path = dir.value();
     let span = dir.span();
@@ -93,7 +93,7 @@ fn read_directory_parser(
     };
 
     for file in read_dir {
-        let Some((name, file)) = ShaderProcessor::validate_file(file, full_path) else { continue };
+        let Some((name, file)) = validate_wgsl_file(file, full_path) else { continue };
         
         let mut abs = current_dir.clone();
         abs.push(file);
@@ -103,33 +103,48 @@ fn read_directory_parser(
         #[cfg(feature = "nightly")]
         tracked_path::path(&abs);
 
-        let (_, tokens) = match parse_tokens(&shader){
+        let tokens = match parse_shader(&shader){
             Ok(tokens) => tokens,
             Err(e) => panic!("Failed at parsing shader {}\nerror: {}", abs, e)
         };
-        let ser = bincode::serialize(&tokens).unwrap();
+        let ser = bincode::serialize(&tokens.0).unwrap();
         let mut ser_array: ExprArray = parse_quote!([]);
         for datum in ser{
             ser_array.elems.push(parse_quote!(#datum));
         }
         
-        let expr: Expr = parse_quote!((#name, bincode::deserialize::<Vec<Token>>(&#ser_array).unwrap()));
+        let expr: Expr = parse_quote!((#name,
+            #prefix::shaderpreprocessor::ParsedShader(
+                bincode::deserialize::<Vec<#prefix::parser::Token>>(&#ser_array).unwrap()
+            )
+        ));
         out.elems.push(expr)
     }
 
     Ok(out)
 }
 
-#[proc_macro]
-pub fn parse_shaders(input: TokenStream) -> TokenStream{
+fn internal_parse_shaders(input: TokenStream, prefix: proc_macro2::TokenStream) -> TokenStream{
     let dir = parse_macro_input!(input as Dir);
-    let expr_array = unpack!(read_directory_parser(&dir, false));
+    let expr_array = unpack!(read_directory_parser(&dir, false, &prefix));
     let hashmap = quote!(
-        std::collections::HashMap::<
-        &str, Vec<Token>,
-        >::from(#expr_array)
+        #prefix::shaderpreprocessor::ShaderProcessor(
+            std::collections::HashMap::<
+            &str, #prefix::shaderpreprocessor::ParsedShader,
+            >::from(#expr_array)
+        )
     );
     hashmap.into()
+}
+
+#[proc_macro]
+pub fn parse_shaders_crate(input: TokenStream) -> TokenStream{
+    internal_parse_shaders(input, quote!(crate))
+}
+
+#[proc_macro]
+pub fn parse_shaders(input: TokenStream) -> TokenStream{
+    internal_parse_shaders(input, quote!(gpwgpu))
 }
 
 fn internal_add_directory(inp: TokenStream, prefix: proc_macro2::TokenStream) -> TokenStream {

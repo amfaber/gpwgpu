@@ -17,15 +17,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
 
     let flat_idx = global_id.x;
     let datum = input[flat_idx];
-	#if NANPROTECT == true
-    if (bitcast<u32>(datum) != 4294967295u){
+	#if NANPROTECT{
+        if (bitcast<u32>(datum) != 4294967295u){
+            let diff = datum - mean;
+            output[flat_idx] = diff * diff;
+        } else {
+            output[flat_idx] = 0.0;
+        }
+    } #else {
         let diff = datum - mean;
         output[flat_idx] = diff * diff;
-    } else {
-        output[flat_idx] = 0.0;
     }
-	#else
-    let diff = datum - mean;
-    output[flat_idx] = diff * diff;
-	#endif
 }

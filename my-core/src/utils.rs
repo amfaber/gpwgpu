@@ -20,7 +20,6 @@ pub fn read_buffer<T: bytemuck::Pod>(
     let view = slice.get_mapped_range();
     let out = bytemuck::cast_slice(&view).to_vec();
     drop(view);
-    drop(slice);
     mappable_buffer.unmap();
     out
 }
@@ -369,7 +368,6 @@ pub fn inspect_buffers<P: AsRef<std::path::Path>>(
         let mut path = path.clone();
         path.push(format!("dump{}.bin", i));
         std::fs::write(&path, &data[..buffer.size() as usize]).unwrap();
-        drop(slice);
         mappable_buffer.unmap();
     }
 
