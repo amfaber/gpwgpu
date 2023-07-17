@@ -1,16 +1,29 @@
 use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
-use std::{collections::HashMap, rc::Rc, borrow::Cow};
+use std::{collections::HashMap, rc::Rc, borrow::Cow, slice::SliceIndex, ops::{RangeBounds, Bound}, mem::size_of};
 use wgpu::{self, util::DeviceExt};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
 
-pub fn read_buffer<T: bytemuck::Pod>(
+pub fn read_buffer<T: bytemuck::Pod, R: RangeBounds<wgpu::BufferAddress>>(
     device: &wgpu::Device,
     mappable_buffer: &wgpu::Buffer,
+    read_range: R,
 ) -> Vec<T> {
-    let slice = mappable_buffer.slice(..);
+    let byte_size = size_of::<T>() as wgpu::BufferAddress;
+    let start = match read_range.start_bound(){
+        Bound::Included(val) => Bound::Included(val * byte_size),
+        Bound::Excluded(val) => Bound::Excluded(val * byte_size),
+        Bound::Unbounded => Bound::Unbounded,
+    };
+
+    let end = match read_range.end_bound(){
+        Bound::Included(val) => Bound::Included(val * byte_size),
+        Bound::Excluded(val) => Bound::Excluded(val * byte_size),
+        Bound::Unbounded => Bound::Unbounded,
+    };
+    let slice = mappable_buffer.slice((start, end));
     let (sender, receiver) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |res| {
         let _ = sender.send(res);
@@ -18,6 +31,7 @@ pub fn read_buffer<T: bytemuck::Pod>(
     device.poll(wgpu::MaintainBase::Wait);
     receiver.recv().unwrap().unwrap();
     let view = slice.get_mapped_range();
+
     let out = bytemuck::cast_slice(&view).to_vec();
     drop(view);
     mappable_buffer.unmap();

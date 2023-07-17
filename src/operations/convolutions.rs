@@ -30,6 +30,7 @@ impl<const N: usize> SeparableConvolution<N>{
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
         output: &wgpu::Buffer,
+        first_additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
         additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
     ) -> Result<Self, ExpansionError> {
         
@@ -40,7 +41,7 @@ impl<const N: usize> SeparableConvolution<N>{
                 output
             };
             let mut bindgroup = vec![(0, input), (1, first_pass_output)];
-            bindgroup.extend(additional_buffers.into_iter()
+            bindgroup.extend(first_additional_buffers.into_iter()
                 .enumerate()
                 .map(|(i, buffer)| ((i + 2) as u32, buffer))
             );
@@ -96,50 +97,8 @@ impl<const N: usize> SeparableConvolution<N>{
             temp,
             output,
             additional_buffers,
+            additional_buffers,
         )
-        // let input_pass = {
-        //     let first_pass_output = if N % 2 == 0{
-        //         temp
-        //     } else {
-        //         output
-        //     };
-        //     let mut bindgroup = vec![(0, input), (1, first_pass_output)];
-        //     bindgroup.extend(additional_buffers.into_iter()
-        //         .enumerate()
-        //         .map(|(i, buffer)| ((i + 2) as u32, buffer))
-        //     );
-        //     FullComputePass::new(device, Rc::clone(&pipeline), &bindgroup)
-        // };
-
-        // let temp_pass = {
-        //     let mut bindgroup = vec![(0, temp), (1, output)];
-        //     bindgroup.extend(additional_buffers.into_iter()
-        //         .enumerate()
-        //         .map(|(i, buffer)| ((i + 2) as u32, buffer))
-        //     );
-        //     FullComputePass::new(device, Rc::clone(&pipeline), &bindgroup)
-        // };
-
-        // let output_pass = {
-        //     let mut bindgroup = vec![(0, output), (1, temp)];
-        //     bindgroup.extend(additional_buffers.into_iter()
-        //         .enumerate()
-        //         .map(|(i, buffer)| ((i + 2) as u32, buffer))
-        //     );
-        //     FullComputePass::new(device, Rc::clone(&pipeline), &bindgroup)
-        // };
-
-        // let temp_pass = if N % 2 == 0{
-        //     [temp_pass, output_pass]
-        // } else {
-        //     [output_pass, temp_pass]
-        // };
-
-        // Ok(Self{
-        //     input_pass,
-        //     temp_pass,
-        //     dims,
-        // })
     }
 
     pub fn execute(

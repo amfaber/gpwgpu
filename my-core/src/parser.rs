@@ -751,7 +751,7 @@ impl<'def> From<Definition<'def>> for String {
                 out.push('u');
                 out
             }
-            Definition::Float(def) => def.to_string(),
+            Definition::Float(def) => format!("{:.1}", def),
             Definition::Any(def) => def.to_string(),
         }
     }

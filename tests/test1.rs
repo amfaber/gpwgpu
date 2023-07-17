@@ -79,7 +79,7 @@ fn standard_deviation() {
         std.execute(&mut encoder);
         queue.submit(Some(encoder.finish()));
         device.poll(wgpu::MaintainBase::Wait);
-        let result: f32 = read_buffer(&device, &output)[0];
+        let result: f32 = read_buffer(&device, &output, ..)[0];
         let mean = contents.iter().sum::<f32>() / n as f32;
         let std = contents.iter().map(|ele| (ele - mean).powi(2)).sum::<f32>() / (n - 1) as f32;
         let std = std.sqrt();
@@ -163,7 +163,7 @@ fn max() {
 
         queue.submit(Some(encoder.finish()));
         device.poll(wgpu::MaintainBase::Wait);
-        let result: f32 = read_buffer(&device, &output)[0];
+        let result: f32 = read_buffer(&device, &output, ..)[0];
 
         println!(
             "n: {n}, rel_error: {}, return: {result}, cpu_result: {cpu_result}",
@@ -184,18 +184,7 @@ fn max() {
 fn gaussian_smoothing_2d() {
     let (device, queue) = default_device().block_on().unwrap();
     
-    let file = std::fs::File::open("tests/images/grey_lion.tiff").unwrap();
-    
-    let mut decoder = tiff::decoder::Decoder::new(file).unwrap();
-
-    let (width, height) = decoder.dimensions().unwrap();
-
-    let shape = [height as i32, width as i32];
-
-    let Ok(tiff::decoder::DecodingResult::U8(data)) = decoder.read_image()
-        else { panic!("couldn't read image") };
-
-    let data = data.iter().map(|&x| x as f32).collect::<Vec<_>>();
+    let (data, shape) = load_lion();
     
     let inp = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
@@ -370,7 +359,7 @@ fn smoothing_3d(){
 
     queue.submit(Some(encoder.finish()));
 
-    let result = read_buffer::<u8>(&device, &bufs.readable);
+    let result = read_buffer::<u8, _>(&device, &bufs.readable, ..);
     std::fs::write("tests/dumps/3d_smoothed.bin", &result).unwrap();
 
     // println!("{}", shape);
@@ -390,11 +379,8 @@ tifffile.imsave("tests/dumps/3d_smoothed.tif", arr)"#
         )).status().unwrap();
 }
 
-#[test]
-fn laplace() {
-    let (device, queue) = default_device().block_on().unwrap();
-    
-    let file = std::fs::File::open("tests/grey_lion.tiff").unwrap();
+fn load_lion() -> (Vec<f32>, [i32; 2]){
+    let file = std::fs::File::open("tests/images/grey_lion.tiff").unwrap();
     
     let mut decoder = tiff::decoder::Decoder::new(file).unwrap();
 
@@ -406,6 +392,14 @@ fn laplace() {
         else { panic!("couldn't read image") };
 
     let data = data.iter().map(|&x| x as f32).collect::<Vec<_>>();
+    (data, shape)
+}
+
+#[test]
+fn laplace() {
+    let (device, queue) = default_device().block_on().unwrap();
+    
+    let (data, shape) = load_lion();
     
     let inp = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
