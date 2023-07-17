@@ -1,14 +1,14 @@
 // use std::collections::HashMap;
 
-use std::{collections::HashMap, fs::DirEntry, path::Path, borrow::Cow};
+use std::borrow::Cow;
 
 // use crate::shaderpreprocessor::*;
 use nom::{
     branch::alt,
-    bytes::complete::{take_till, take_until, is_not, take_while, take_until1, take_till1},
-    character::complete::{alpha1, alphanumeric1, multispace0, char, alpha0, anychar, space0, line_ending, multispace1},
+    bytes::complete::{take_till, take_until, take_till1},
+    character::complete::{alpha1, alphanumeric1, multispace0, char, space0, line_ending},
     combinator::{cut, map, recognize, opt},
-    error::{context, Error, ErrorKind, ParseError},
+    error::{ErrorKind, ParseError},
     multi::{many0, many0_count},
     number::complete::double,
     sequence::{delimited, pair, preceded, tuple},
@@ -24,7 +24,7 @@ pub type NomError<'a> = nom_supreme::error::ErrorTree<&'a str>;
 pub enum Expr<'a> {
     Bool(bool),
     Num(f64),
-    Ident(&'a str),
+    Ident(Cow<'a, str>),
     Neg(Box<Expr<'a>>),
 
     Mul(Box<Expr<'a>>, Box<Expr<'a>>),
@@ -52,24 +52,47 @@ pub enum EvalError {
     IdentNotFound(String),
 }
 
+impl<'a> Expr<'a>{
+    fn into_owned(self) -> Expr<'static>{
+        match self{
+            Expr::Bool(b) => Expr::Bool(b),
+            Expr::Num(n) => Expr::Num(n),
+            Expr::Ident(cow) => Expr::Ident(Cow::Owned(cow.into_owned())),
+            Expr::Neg(e) => Expr::Neg(Box::new(e.into_owned())),
+            Expr::Mul(e1, e2) => Expr::Mul(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::Div(e1, e2) => Expr::Div(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::Add(e1, e2) => Expr::Add(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::Sub(e1, e2) => Expr::Sub(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::LessThan(e1, e2) => Expr::LessThan(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::GreaterThan(e1, e2) => Expr::GreaterThan(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::LessThanOrEqual(e1, e2) => Expr::LessThanOrEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::GreaterThanOrEqual(e1, e2) => Expr::GreaterThanOrEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::Equal(e1, e2) => Expr::Equal(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::NotEqual(e1, e2) => Expr::NotEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::And(e1, e2) => Expr::And(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Expr::Or(e1, e2) => Expr::Or(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+        }
+    }
+}
+
 impl<'a> Expr<'a> {
     pub fn simplify_without_ident(self) -> Result<Expr<'a>, EvalError> {
-        self.simplify(|ident| Some(Expr::Ident(ident)))
+        self.simplify(|ident| Some(Expr::Ident(ident.into())))
     }
 
-    pub fn simplify(self, lookup: impl Fn(&'a str) -> Option<Expr>) -> Result<Expr<'a>, EvalError> {
+    pub fn simplify(self, lookup: impl Fn(Cow<'a, str>) -> Option<Expr>) -> Result<Expr<'a>, EvalError> {
         self.simplify_internal(&lookup)
     }
 
     fn simplify_internal(
         self,
-        lookup: &impl Fn(&'a str) -> Option<Expr>,
+        lookup: &impl Fn(Cow<'a, str>) -> Option<Expr>,
     ) -> Result<Expr<'a>, EvalError> {
         let out = match self {
             Expr::Bool(b) => Expr::Bool(b),
             Expr::Num(n) => Expr::Num(n),
-            Expr::Ident(name) => {
-                let expr = lookup(name).ok_or_else(|| EvalError::IdentNotFound(name.to_string()))?;
+            Expr::Ident(ref name) => {
+                let expr = lookup(name.clone()).ok_or_else(|| EvalError::IdentNotFound(name.to_string()))?;
                 let expr = if expr != self {
                     expr.simplify_internal(lookup)?
                 } else {
@@ -235,7 +258,7 @@ fn parse_ident(input: &str) -> IResult<&str, Expr, NomError> {
                 alt((alpha1, tag("_"))),
                 many0_count(alt((alphanumeric1, tag("_")))),
             )),
-            Expr::Ident,
+            |s: &str| Expr::Ident(s.into()),
         ),
     )(input)
 }
@@ -434,6 +457,15 @@ pub enum Range<'a> {
     Inclusive((Expr<'a>, Expr<'a>)),
 }
 
+impl<'a> Range<'a>{
+    fn into_owned(self) -> Range<'static>{
+        match self{
+            Range::Exclusive((expr1, expr2)) => Range::Exclusive((expr1.into_owned(), expr2.into_owned())),
+            Range::Inclusive((expr1, expr2)) => Range::Inclusive((expr1.into_owned(), expr2.into_owned())),
+        }
+    }
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub enum Else<'a>{
     #[serde(borrow)]
@@ -584,7 +616,6 @@ fn parse_if(input: &str) -> IResult<&str, Token, NomError> {
 }
 
 fn parse_range(input: &str) -> IResult<&str, Range, NomError> {
-
     let (input, first_expr_str) = cut(take_until(".."))(input)?;
     
     let (_, exp1) = parse_expr(first_expr_str)?;
@@ -654,14 +685,14 @@ pub fn parse_tokens(mut input: &str) -> IResult<&str, Vec<Token>, NomError> {
 
 
 #[derive(Debug)]
-pub enum ExpansionError<'a>{
-    IdentNotFound(&'a str),
+pub enum ExpansionError{
+    IdentNotFound(String),
     SimplifyError(EvalError),
-    NonBoolCondition(Expr<'a>),
-    NonNumRange(Range<'a>),
+    NonBoolCondition(Expr<'static>),
+    NonNumRange(Range<'static>),
 }
 
-impl<'a> From<EvalError> for ExpansionError<'a>{
+impl<'a> From<EvalError> for ExpansionError{
     fn from(value: EvalError) -> Self {
         ExpansionError::SimplifyError(value)
     }
@@ -674,6 +705,34 @@ pub enum Definition<'def> {
     UInt(u32),
     Any(Cow<'def, str>),
     Float(f32),
+}
+impl<'a> From<bool> for Definition<'a>{
+    fn from(value: bool) -> Self {
+        Definition::Bool(value)
+    }
+}
+
+impl<'a> From<i32> for Definition<'a>{
+    fn from(value: i32) -> Self {
+        Definition::Int(value)
+    }
+}
+
+impl<'a> From<u32> for Definition<'a>{
+    fn from(value: u32) -> Self {
+        Definition::UInt(value)
+    }
+}
+
+impl<'a> From<&'a str> for Definition<'a>{
+    fn from(value: &'a str) -> Self {
+        Definition::Any(value.into())
+    }
+}
+impl<'a> From<f32> for Definition<'a>{
+    fn from(value: f32) -> Self {
+        Definition::Float(value)
+    }
 }
 
 impl<'def> Default for Definition<'def>{
@@ -702,7 +761,7 @@ impl<'def> From<Definition<'def>> for String {
 // FIXME This could be a regular function but I can't be arsed figuring out the traits and lifetimes
 macro_rules! make_expr_lookup {
     ($func:ident) => {
-    |s: &'a str| -> Option<Expr<'a>> {
+    |s: Cow<'a, str>| -> Option<Expr<'a>> {
         let def = $func(s)?;
         match def{
             Definition::Bool(val) => Some(Expr::Bool(val)),
@@ -719,8 +778,8 @@ macro_rules! make_expr_lookup {
 fn process_if<'a, 'def>(
     input: If<'a>,
     result: &mut String,
-    lookup: &impl Fn(&str) -> Option<Definition<'def>>
-) -> Result<(), ExpansionError<'a>>{
+    lookup: &impl Fn(Cow<str>) -> Option<Definition<'def>>
+) -> Result<(), ExpansionError>{
     let expr_lookup = make_expr_lookup!(lookup);
 
     let If{
@@ -730,7 +789,7 @@ fn process_if<'a, 'def>(
     } = input;
 
     let condition = condition
-        .simplify_internal(&expr_lookup)?;
+        .simplify_internal(&expr_lookup).unwrap();
     match condition{
         Expr::Bool(true) => process_internal(tokens, result, lookup),
         Expr::Bool(false) => {
@@ -744,15 +803,15 @@ fn process_if<'a, 'def>(
                 None => Ok(()),
             }
         },
-        _ => return Err(ExpansionError::NonBoolCondition(condition)),
+        _ => return Err(ExpansionError::NonBoolCondition(condition.into_owned())),
     }
 }
 
 fn process_for<'a, 'def>(
     input: For<'a>,
     result: &mut String,
-    lookup: &impl Fn(&str) -> Option<Definition<'def>>,
-) -> Result<(), ExpansionError<'a>>{
+    lookup: &impl Fn(Cow<str>) -> Option<Definition<'def>>,
+) -> Result<(), ExpansionError>{
     let For{
         ident,
         range,
@@ -781,17 +840,17 @@ fn process_for<'a, 'def>(
         Range::Inclusive((Expr::Num(start), Expr::Num(end))) => {
             Box::new(start as isize..=end as isize) as Box<dyn Iterator<Item = isize>>
         },
-        _ => return Err(ExpansionError::NonNumRange(range))
+        _ => return Err(ExpansionError::NonNumRange(range.into_owned()))
     };
 
     for val in iter{
-        let new_lookup = Box::new(|s: &str| -> Option<Definition<'def>>{
+        let new_lookup = Box::new(|s: Cow<str>| -> Option<Definition<'def>>{
             if s == ident{
                 Some(Definition::Int(val as i32))
             } else {
                 lookup(s)
             }
-        }) as Box<dyn Fn(&str) -> Option<Definition<'def>>>;
+        }) as Box<dyn Fn(Cow<str>) -> Option<Definition<'def>>>;
         process_internal(tokens.clone(), result, &new_lookup)?;
     }
     Ok(())
@@ -800,18 +859,16 @@ fn process_for<'a, 'def>(
 fn process_internal<'a, 'def>(
     tokens: Vec<Token<'a>>,
     result: &mut String,
-    lookup: &impl Fn(&str) -> Option<Definition<'def>>
-) -> Result<(), ExpansionError<'a>>{
+    lookup: &impl Fn(Cow<str>) -> Option<Definition<'def>>
+) -> Result<(), ExpansionError>{
     for token in tokens{
         match token{
             Token::Code(code) => result.push_str(code),
             Token::Ident(name) => {
-                let Some(shader_def) = lookup(name) else { return Err(ExpansionError::IdentNotFound(name))};
+                let Some(shader_def) = lookup(name.into()) else { return Err(ExpansionError::IdentNotFound(name.to_string()))};
                 let string = String::from(shader_def);
                 if let Ok((_, tokens)) = parse_tokens(&string){
-                    // FIXME the error needs to be propagated up from here, but currently wants
-                    // to reference the newly created string. Currently silently fails
-                    let _ = process_internal(tokens, result, lookup);
+                    process_internal(tokens, result, lookup)?;
                 } else{
                     result.push_str(&string);
                 }
@@ -825,7 +882,7 @@ fn process_internal<'a, 'def>(
     Ok(())
 }
 
-pub fn process<'def>(tokens: Vec<Token>, lookup: impl Fn(&str) -> Option<Definition<'def>>) -> Result<String, ExpansionError>{
+pub fn process<'def>(tokens: Vec<Token>, lookup: impl Fn(Cow<str>) -> Option<Definition<'def>>) -> Result<String, ExpansionError>{
     let mut result = String::new();
     
     process_internal(

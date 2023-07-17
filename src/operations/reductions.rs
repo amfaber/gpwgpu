@@ -28,18 +28,18 @@ impl ReductionType {
     }
 }
 
-pub struct Reduce {
+pub struct Reduce<'wg> {
     outplace_pass: Option<FullComputePass>,
     inplace_pass: FullComputePass,
 
     last_reduction: FullComputePass,
     size: usize,
-    workgroup_size: WorkgroupSize,
+    workgroup_size: WorkgroupSize<'wg>,
     unroll: u32,
     last_size: u32,
 }
 
-impl Reduce {
+impl<'wg> Reduce<'wg> {
     pub fn new<'buf, 'proc>(
         device: &wgpu::Device,
         input: &wgpu::Buffer,
@@ -49,7 +49,7 @@ impl Reduce {
         ty: ReductionType,
         nanprotection: bool,
         unroll: u32,
-        specs: ShaderSpecs,
+        specs: ShaderSpecs<'wg, '_>,
 
         extra_push: String,
         extra_last: String,
@@ -59,7 +59,7 @@ impl Reduce {
         last_size: u32,
 
         inplace_label: &str,
-    ) -> Result<Self, ExpansionError<'proc>> {
+    ) -> Result<Self, ExpansionError> {
         let workgroup_size = specs.workgroup_size.clone();
 
         let outplace_pass = match temp {
@@ -193,12 +193,12 @@ impl Reduce {
     }
 }
 
-struct MeanReduce {
-    reduction: Reduce,
+struct MeanReduce<'wg> {
+    reduction: Reduce<'wg>,
 }
 
-impl MeanReduce {
-    pub fn new<'proc>(
+impl<'wg> MeanReduce<'wg> {
+    pub fn new(
         device: &wgpu::Device,
         input: &wgpu::Buffer,
         temp: Option<&wgpu::Buffer>,
@@ -206,9 +206,9 @@ impl MeanReduce {
         output: &wgpu::Buffer,
         size: usize,
         unroll: u32,
-        specs: ShaderSpecs,
+        specs: ShaderSpecs<'wg, '_>,
         last_size: u32,
-    ) -> Result<Self, ExpansionError<'proc>> {
+    ) -> Result<Self, ExpansionError> {
         let extra_buffers = match divisor {
             Some(_) => "\
 @group(0) @binding(2)
@@ -254,14 +254,14 @@ var<storage, read> mean_divisor: u32;"
     }
 }
 
-pub struct StandardDeviationReduce {
-    mean: MeanReduce,
+pub struct StandardDeviationReduce<'wg> {
+    mean: MeanReduce<'wg>,
     square_residuals: FullComputePass,
-    mean_and_sqrt: Reduce,
+    mean_and_sqrt: Reduce<'wg>,
 }
 
-impl StandardDeviationReduce {
-    pub fn new<'proc>(
+impl<'wg> StandardDeviationReduce<'wg> {
+    pub fn new(
         device: &wgpu::Device,
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
@@ -269,9 +269,9 @@ impl StandardDeviationReduce {
         output: &wgpu::Buffer,
         size: usize,
         unroll: u32,
-        specs: ShaderSpecs,
+        specs: ShaderSpecs<'wg, '_>,
         last_size: u32,
-    ) -> Result<Self, ExpansionError<'proc>> {
+    ) -> Result<Self, ExpansionError> {
         let mean = {
             MeanReduce::new(
                 device,
@@ -291,8 +291,8 @@ impl StandardDeviationReduce {
             let specs = ShaderSpecs::new(wg_size)
                 .direct_dispatcher(&[size as u32, 1, 1])
                 .extend_defs([
-                    ("NANPROTECT".into(), Definition::Bool(divisor.is_some())),
-                    ("TOTALELEMENTS".into(), Definition::UInt(size as u32)),
+                    ("NANPROTECT", Definition::Bool(divisor.is_some())),
+                    ("TOTALELEMENTS", Definition::UInt(size as u32)),
                 ]);
             let shader = PREPROCESSOR
                 .process_by_name("square_residuals", specs)?

@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, borrow::Cow};
 use wgpu::{self, util::DeviceExt};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
@@ -184,35 +184,35 @@ pub unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkgroupSize {
+pub struct WorkgroupSize<'a> {
     pub x: u32,
     pub y: u32,
     pub z: u32,
-    pub x_name: String,
-    pub y_name: String,
-    pub z_name: String,
+    pub x_name: Cow<'a, str>,
+    pub y_name: Cow<'a, str>,
+    pub z_name: Cow<'a, str>,
 }
 
-impl WorkgroupSize {
+impl<'a> WorkgroupSize<'a> {
     pub fn new(x: u32, y: u32, z: u32) -> Self {
         Self {
             x,
             y,
             z,
-            x_name: "WG_X".to_string(),
-            y_name: "WG_Y".to_string(),
-            z_name: "WG_Z".to_string(),
+            x_name: "WG_X".into(),
+            y_name: "WG_Y".into(),
+            z_name: "WG_Z".into(),
         }
     }
 }
 
-impl From<(u32, u32, u32)> for WorkgroupSize {
+impl<'a> From<(u32, u32, u32)> for WorkgroupSize<'a> {
     fn from(value: (u32, u32, u32)) -> Self {
         Self::new(value.0, value.1, value.2)
     }
 }
 
-impl From<[u32; 3]> for WorkgroupSize {
+impl<'a> From<[u32; 3]> for WorkgroupSize<'a> {
     fn from(value: [u32; 3]) -> Self {
         Self::new(value[0], value[1], value[2])
     }

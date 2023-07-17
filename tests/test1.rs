@@ -1,68 +1,23 @@
-use std::{time::{Duration, Instant}, collections::HashMap};
+#![allow(unused_imports)]
+use std::{time::{Duration, Instant}, collections::HashMap, io::Read};
 
+use bytemuck::Pod;
 use gpwgpu::{
     operations::{
-        convolutions::GaussianSmoothing,
+        convolutions::{GaussianSmoothing, GaussianLaplace},
         reductions::{Reduce, ReductionType, StandardDeviationReduce},
     },
-    parser::{parse_tokens, parse_expr, Token, process, Definition, trim_trailing_spaces},
+    parser::{parse_tokens, Token, process, Definition, trim_trailing_spaces},
     shaderpreprocessor::{ShaderProcessor, ShaderSpecs, load_shaders_dyn},
     utils::{default_device, inspect_buffers, read_buffer, FullComputePass},
 };
 use macros::*;
+use ndarray::{Array, Axis, Array3};
 use pollster::FutureExt;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BufferDescriptor, BufferUsages,
 };
-
-// #[test]
-// fn macro_inplace() {
-//     let mut pp = ShaderProcessor::default();
-//     add_directory!(pp, "tests/test_shaders");
-
-//     assert!(pp.all_shaders.contains_key(&"first".into()));
-//     assert!(pp.all_shaders.contains_key(&"second".into()));
-// }
-
-// #[test]
-// fn macro_return() {
-//     let pp = add_directory!("tests/test_shaders");
-//     assert!(pp.all_shaders.contains_key(&"first".into()));
-//     assert!(pp.all_shaders.contains_key(&"second".into()));
-// }
-
-// #[test]
-// fn for_loop() {
-//     let pp = add_directory!("tests/test_shaders");
-//     let specs = ShaderSpecs::new((1, 1, 1)).extend_defs(&[ShaderDefVal::UInt("HI".to_string(), 5)]);
-//     let shader = pp.process_by_key("for_loop", specs).unwrap();
-
-//     let answer = "@group(0) @binding(0)
-// var<storage, read_write> buffer: array<f32>;
-
-// @compute @workgroup_size(1u, 1u, 1u)
-// fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
-// \t0, 0u
-// \t0, 1u
-// \t0, 2u
-// \t1, 0u
-// \t1, 1u
-// \t1, 2u
-// \t2, 0u
-// \t2, 1u
-// \t2, 2u
-// \t3, 0u
-// \t3, 1u
-// \t3, 2u
-// \t4, 0u
-// \t4, 1u
-// \t4, 2u
-// }
-// ";
-//     print!("{}", shader.source);
-//     assert_eq!(answer, shader.source);
-// }
 
 #[test]
 fn debug_parser(){
@@ -143,63 +98,6 @@ fn standard_deviation() {
     full(8);
     full(391939);
 }
-
-// #[test]
-// fn preprocess() {
-//     let (device, queue) = default_device().block_on().unwrap();
-
-//     let pp = add_directory!("tests/test_shaders");
-
-//     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-//         label: None,
-//         size: (512 * 512 * std::mem::size_of::<f32>()) as u64,
-//         usage: wgpu::BufferUsages::STORAGE,
-//         mapped_at_creation: false,
-//     });
-
-//     let n = 1000;
-//     let tests = |it: usize| -> Option<Duration> {
-//         let wg = match it {
-//             0 => (16, 16, 1),
-//             1 => (256, 1, 1),
-//             2 => (1, 1, 1),
-//             _ => return None,
-//         };
-//         let specs = ShaderSpecs::new(wg)
-//             .direct_dispatcher(&[512, 512, 1])
-//             .extend_defs(&[
-//                 ShaderDefVal::UInt("TEST".into(), 32),
-//                 ShaderDefVal::UInt("N_COL".into(), 512),
-//             ]);
-
-//         let result = pp.process_by_key("first", specs).unwrap();
-
-//         let nonbound = result.build(&device);
-
-//         let bindings: [(u32, &wgpu::Buffer); 1] = [(0, &buffer)];
-
-//         let pass = FullComputePass::new(&device, nonbound, &bindings);
-
-//         let now = Instant::now();
-//         for _ in 0..n {
-//             let mut encoder = device.create_command_encoder(&Default::default());
-
-//             pass.execute(&mut encoder, &[]);
-
-//             queue.submit(Some(encoder.finish()));
-
-//             device.poll(wgpu::Maintain::Wait);
-//         }
-
-//         Some(now.elapsed())
-//     };
-
-//     let mut i = 0;
-//     while let Some(duration) = tests(i) {
-//         dbg!(duration);
-//         i += 1;
-//     }
-// }
 
 #[test]
 fn max() {
@@ -283,16 +181,16 @@ fn max() {
 }
 
 #[test]
-fn gaussian_smoothing() {
+fn gaussian_smoothing_2d() {
     let (device, queue) = default_device().block_on().unwrap();
     
-    let file = std::fs::File::open("tests/grey_lion.tiff").unwrap();
+    let file = std::fs::File::open("tests/images/grey_lion.tiff").unwrap();
     
     let mut decoder = tiff::decoder::Decoder::new(file).unwrap();
 
     let (width, height) = decoder.dimensions().unwrap();
 
-    let shape = [height, width];
+    let shape = [height as i32, width as i32];
 
     let Ok(tiff::decoder::DecodingResult::U8(data)) = decoder.read_image()
         else { panic!("couldn't read image") };
@@ -327,9 +225,226 @@ fn gaussian_smoothing() {
     });
     
 
-    let smoothing = GaussianSmoothing::new(&device, shape, &inp, &temp, &out, 5.0).unwrap();
+    let smoothing = GaussianSmoothing::new(&device, shape, &inp, &temp, &out).unwrap();
     let mut encoder = device.create_command_encoder(&Default::default());
-    smoothing.execute(&mut encoder);
+    smoothing.execute(&mut encoder, [5.0; 2]);
+    inspect_buffers(
+        &[
+            &inp,
+            &temp,
+            &out,
+        ],
+        &readable,
+        &queue,
+        &mut encoder,
+        &device,
+        "tests/dumps",
+    );
+
+}
+
+fn _load_cells() -> (Array3<f32>, [i32; 3]){
+    let mut file = std::fs::File::open("tests/images/cells3d.bin").unwrap();
+    let mut data_init = Vec::<u16>::with_capacity(
+        file.metadata().unwrap().len() as usize / std::mem::size_of::<u16>()
+    );
+    unsafe{
+        data_init.set_len(data_init.capacity());
+    }
+    
+    file.read(bytemuck::cast_slice_mut(&mut data_init[..])).unwrap();
+    let data = Array::from_shape_vec((60, 2, 256, 256), data_init).unwrap();
+    let channel = 1;
+    let data_owned = data.index_axis(Axis(1), channel).mapv(|val| val as f32);
+    let shape: [_; 3] = data_owned
+        .shape()
+        .iter()
+        .map(|&x| x as i32)
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+    (data_owned, shape)
+}
+
+struct DefaultBuffers{
+    inp: wgpu::Buffer,
+    temp: wgpu::Buffer,
+    temp2: wgpu::Buffer,
+    out: wgpu::Buffer,
+    readable: wgpu::Buffer,
+}
+
+impl DefaultBuffers{
+    fn new<T: Pod>(device: &wgpu::Device, data: &[T]) -> Self{
+        let inp = device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&data),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        });
+
+        let temp = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: inp.size(),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+    
+        let temp2 = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: inp.size(),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let out = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: inp.size(),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let readable = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: inp.size(),
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+    
+        Self{
+            inp,
+            temp,
+            temp2,
+            out,
+            readable,
+        }
+        
+    }
+}
+
+fn create_blob(shape: [i32; 3], r: f32) -> Array3<f32>{
+    let [im, jm, km] = shape.map(|x| x as f32);
+    
+    let data = Array::from_shape_fn(shape.map(|x| x as usize), |(i, j, k)|{
+        let (x, y, z) = (i as f32 - im/2., j as f32 - jm/2., k as f32 - km/2.);
+        let this_r = (x.powi(2) + y.powi(2) + z.powi(2)).sqrt();
+        if this_r < r{
+            1.0
+        } else {
+            0.0
+        }
+    });
+    data
+}
+
+#[test]
+fn smoothing_3d(){
+
+    let (device, queue) = default_device().block_on().unwrap();
+    
+    // let (data_owned, shape) = load_cells();
+
+    let shape = [100, 100, 100];
+    let data_owned = create_blob(shape, 3.);
+    
+    let data = data_owned.as_slice().unwrap();
+
+    let bufs = DefaultBuffers::new(&device, data);
+    
+    let mut encoder = device.create_command_encoder(&Default::default());
+    if false{
+        let smoothing = GaussianSmoothing::new(&device, shape, &bufs.inp, &bufs.temp, &bufs.out).unwrap();
+        smoothing.execute(&mut encoder, [5.0, 5.0, 2.0]);
+    } else {
+        let laplace = GaussianLaplace::new(&device, shape, &bufs.inp, &bufs.temp, &bufs.temp2, &bufs.out).unwrap();
+        laplace.execute(&mut encoder, [4.0, 4.0, 4.0]);
+    }
+
+    
+    encoder.copy_buffer_to_buffer(
+        &bufs.out,
+        0,
+        &bufs.readable,
+        0,
+        bufs.inp.size()
+    );
+
+    queue.submit(Some(encoder.finish()));
+
+    let result = read_buffer::<u8>(&device, &bufs.readable);
+    std::fs::write("tests/dumps/3d_smoothed.bin", &result).unwrap();
+
+    // println!("{}", shape);
+    
+    let shape0 = shape[0];
+    let shape1 = shape[1];
+    let shape2 = shape[2];
+    
+    std::process::Command::new("python")
+        .arg("-c")
+        .arg(format!(r#"\
+import numpy as np
+import tifffile
+arr = np.fromfile("tests/dumps/3d_smoothed.bin", dtype = "float32").reshape({shape0}, {shape1}, {shape2})
+arr = arr.astype("uint16")
+tifffile.imsave("tests/dumps/3d_smoothed.tif", arr)"#
+        )).status().unwrap();
+}
+
+#[test]
+fn laplace() {
+    let (device, queue) = default_device().block_on().unwrap();
+    
+    let file = std::fs::File::open("tests/grey_lion.tiff").unwrap();
+    
+    let mut decoder = tiff::decoder::Decoder::new(file).unwrap();
+
+    let (width, height) = decoder.dimensions().unwrap();
+
+    let shape = [height as i32, width as i32];
+
+    let Ok(tiff::decoder::DecodingResult::U8(data)) = decoder.read_image()
+        else { panic!("couldn't read image") };
+
+    let data = data.iter().map(|&x| x as f32).collect::<Vec<_>>();
+    
+    let inp = device.create_buffer_init(&BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&data),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+    });
+
+    let temp = device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: inp.size(),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let temp2 = device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: inp.size(),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let out = device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: inp.size(),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let readable = device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: inp.size(),
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    
+
+    let laplace = GaussianLaplace::new(&device, shape, &inp, &temp, &temp2, &out).unwrap();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    laplace.execute(&mut encoder, [5.0; 2]);
     inspect_buffers(
         &[
             &inp,
@@ -375,7 +490,7 @@ fn parser_test() {
     dbg!(ser.len());
     let de_time = std::time::Instant::now();
     for _ in 0..reps{
-        let de = bincode::deserialize::<Vec<Token>>(&ser).unwrap();
+        bincode::deserialize::<Vec<Token>>(&ser).unwrap();
     }
     dbg!(de_time.elapsed());
 

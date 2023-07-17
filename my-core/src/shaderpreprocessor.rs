@@ -1,14 +1,11 @@
 use crate::{utils::{infer_compute_bindgroup_layout, Dispatcher, WorkgroupSize}, parser::{Token, Definition, parse_tokens, process, NomError}};
-use once_cell::sync::Lazy;
 use std::{
     borrow::Cow,
     collections::HashMap,
-    fs::{self, DirEntry},
-    num::ParseIntError,
+    fs::DirEntry,
     path::Path,
     rc::Rc,
 };
-use thiserror::Error;
 
 #[derive(Debug)]
 pub struct NonBoundPipeline {
@@ -19,11 +16,11 @@ pub struct NonBoundPipeline {
 }
 
 #[derive(Debug, Clone)]
-pub struct ShaderSpecs<'def> {
-    pub workgroup_size: WorkgroupSize,
+pub struct ShaderSpecs<'wg, 'def> {
+    pub workgroup_size: WorkgroupSize<'wg>,
     pub dispatcher: Option<Dispatcher>,
     pub push_constants: Option<u32>,
-    pub shader_defs: HashMap<String, Definition<'def>>,
+    pub shader_defs: HashMap<Cow<'def, str>, Definition<'def>>,
     pub entry_point: Option<String>,
 
     pub shader_label: Option<String>,
@@ -32,8 +29,8 @@ pub struct ShaderSpecs<'def> {
     pub pipeline_label: Option<String>,
 }
 
-impl<'def> ShaderSpecs<'def> {
-    pub fn new(workgroup_size: impl Into<WorkgroupSize>) -> Self {
+impl<'wg: 'def, 'def> ShaderSpecs<'wg, 'def> {
+    pub fn new(workgroup_size: impl Into<WorkgroupSize<'wg>>) -> Self {
         let workgroup_size = workgroup_size.into();
         let shader_defs = HashMap::from([
             (workgroup_size.x_name.clone(), Definition::UInt(workgroup_size.x)),
@@ -53,7 +50,7 @@ impl<'def> ShaderSpecs<'def> {
         }
     }
 
-    pub fn workgroupsize(mut self, val: WorkgroupSize) -> Self {
+    pub fn workgroupsize(mut self, val: WorkgroupSize<'wg>) -> Self {
         self.workgroup_size = val;
         self
     }
@@ -73,8 +70,9 @@ impl<'def> ShaderSpecs<'def> {
         self
     }
 
-    pub fn extend_defs(mut self, vals: impl IntoIterator<Item = (String, Definition<'def>)>) -> Self {
-        self.shader_defs.extend(vals);
+    pub fn extend_defs(mut self, vals: impl IntoIterator<Item = (impl Into<Cow<'wg, str>>, Definition<'def>)>) -> Self {
+        let iter = vals.into_iter().map(|(key, val)| (key.into(), val));
+        self.shader_defs.extend(iter);
         self
     }
 
@@ -114,12 +112,12 @@ impl<'def> ShaderSpecs<'def> {
 /// A processed [Shader]. This cannot contain preprocessor directions. It must be "ready to compile"
 
 #[derive(Debug)]
-pub struct ProcessedShader<'def> {
+pub struct ProcessedShader<'a, 'def> {
     pub source: String,
-    pub specs: ShaderSpecs<'def>,
+    pub specs: ShaderSpecs<'a, 'def>,
 }
 
-impl<'def> ProcessedShader<'def> {
+impl<'a, 'def> ProcessedShader<'a, 'def> {
     pub fn get_source(&self) -> &str {
         &self.source
     }
@@ -222,14 +220,14 @@ impl<'a> ShaderProcessor<'a> {
         }).collect::<Result<HashMap<&str, ParsedShader>, (String, NomError)>>().map(ShaderProcessor)
     }
     
-    pub fn process_by_name<'def>(
+    pub fn process_by_name<'wg, 'def>(
         &self,
         name: &str,
-        specs: ShaderSpecs<'def>,
-    ) -> Result<ProcessedShader<'def>, crate::parser::ExpansionError> {
+        specs: ShaderSpecs<'wg, 'def>,
+    ) -> Result<ProcessedShader<'wg, 'def>, crate::parser::ExpansionError> {
         let definitions = &specs.shader_defs;
-        let lookup = |s: &str|{
-            definitions.get(s).cloned()
+        let lookup = |s: Cow<str>|{
+            definitions.get(&s as &str).cloned()
         };
         let source = process(self.0[name].0.clone(), lookup)?;
         Ok(ProcessedShader{

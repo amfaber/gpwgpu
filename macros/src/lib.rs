@@ -33,49 +33,23 @@ macro_rules! unpack {
 }
 
 struct ProcessorAndDir {
+    vis: Option<Visibility>,
     processor: Ident,
     dir: Dir,
 }
 
-type Dir = LitStr;
-
 impl Parse for ProcessorAndDir {
     fn parse(input: ParseStream) -> Result<Self> {
+        let vis: Option<Visibility> = input.parse().ok();
         let processor = input.parse()?;
         let _: Token![,] = input.parse()?;
         let dir = input.parse()?;
 
-        Ok(Self { processor, dir })
+        Ok(Self { vis, processor, dir })
     }
 }
 
-fn read_directory(
-    dir: &Dir,
-    full_path: bool,
-    prefix: &proc_macro2::TokenStream,
-) -> Result<ExprArray> {
-    let path = dir.value();
-    let span = dir.span();
-    let Ok(read_dir) = fs::read_dir(path) else {
-        return Err(Error::new(span, "Could not read directory"))
-    };
-    let mut out: ExprArray = parse_quote!([]);
-    let Ok(current_dir) = std::env::current_dir() else{
-        return Err(Error::new(span, "Could not read current directory"))
-    };
-
-    for file in read_dir {
-        let Some((name, file)) = validate_wgsl_file(file, full_path) else { continue };
-        let mut abs = current_dir.clone();
-        abs.push(file);
-        let Ok(abs) = abs.into_os_string().into_string() else { continue };
-        let expr: Expr = parse_quote!((#prefix::ShaderImport::Name(#name.to_string()),
-            #prefix::Shader::from_wgsl(include_str!(#abs))));
-        out.elems.push(expr)
-    }
-
-    Ok(out)
-}
+type Dir = LitStr;
 
 fn read_directory_parser(
     dir: &Dir,
@@ -115,7 +89,7 @@ fn read_directory_parser(
         
         let expr: Expr = parse_quote!((#name,
             #prefix::shaderpreprocessor::ParsedShader(
-                bincode::deserialize::<Vec<#prefix::parser::Token>>(&#ser_array).unwrap()
+                #prefix::bincode::deserialize::<Vec<#prefix::parser::Token>>(&#ser_array).unwrap()
             )
         ));
         out.elems.push(expr)
@@ -125,14 +99,15 @@ fn read_directory_parser(
 }
 
 fn internal_parse_shaders(input: TokenStream, prefix: proc_macro2::TokenStream) -> TokenStream{
-    let dir = parse_macro_input!(input as Dir);
+    let ProcessorAndDir { vis, processor, dir } = parse_macro_input!(input as ProcessorAndDir);
     let expr_array = unpack!(read_directory_parser(&dir, false, &prefix));
+    let pp_ty = quote!(#prefix::shaderpreprocessor::ShaderProcessor);
     let hashmap = quote!(
-        #prefix::shaderpreprocessor::ShaderProcessor(
+        #vis static #processor: #prefix::Lazy<#pp_ty> = #prefix::Lazy::new(|| #pp_ty(
             std::collections::HashMap::<
             &str, #prefix::shaderpreprocessor::ParsedShader,
             >::from(#expr_array)
-        )
+        ));
     );
     hashmap.into()
 }
@@ -145,47 +120,4 @@ pub fn parse_shaders_crate(input: TokenStream) -> TokenStream{
 #[proc_macro]
 pub fn parse_shaders(input: TokenStream) -> TokenStream{
     internal_parse_shaders(input, quote!(gpwgpu))
-}
-
-fn internal_add_directory(inp: TokenStream, prefix: proc_macro2::TokenStream) -> TokenStream {
-    let (processor, directory) = match syn::parse::<ProcessorAndDir>(inp.clone()) {
-        Ok(ProcessorAndDir { processor, dir }) => (Some(processor), dir),
-        Err(_) => {
-            let processor = None;
-            let dir = parse_macro_input!(inp as Dir);
-            (processor, dir)
-        }
-    };
-
-    let out = unpack!(read_directory(&directory, false, &prefix));
-    let hashmap = quote!(std::collections::HashMap::<
-        #prefix::ShaderImport,
-        #prefix::Shader,
-    >::from(#out));
-
-    let out = match processor {
-        Some(ident) => quote!(#ident.all_shaders.extend(#hashmap)),
-        None => quote!(#prefix::ShaderProcessor::from(#hashmap)),
-    };
-
-    // let formatter = RustFmt::default();
-    // let prettied = formatter.format_str(out.to_string()).unwrap_or(out.to_string());
-    // std::fs::write("macros/expansions/expanded.rs", prettied).unwrap();
-
-    out.into()
-}
-
-
-
-// #[proc_macro]
-// pub fn add_directory()
-
-#[proc_macro]
-pub fn add_directory(inp: TokenStream) -> TokenStream {
-    internal_add_directory(inp, quote!(gpwgpu::shaderpreprocessor))
-}
-
-#[proc_macro]
-pub fn add_directory_crate(inp: TokenStream) -> TokenStream {
-    internal_add_directory(inp, quote!(crate::shaderpreprocessor))
 }

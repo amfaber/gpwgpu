@@ -2,7 +2,7 @@
 members = ["macros", "my-core"]
 
 [workspace.dependencies]
-wgpu = "0.16.*"
+wgpu = "0.16.1"
 bytemuck = { version = "1.12.1", features = ["derive"] }
 once_cell = "1.18.0"
 quote = "1.0.28"
@@ -27,6 +27,7 @@ bincode = { workspace = true }
 [dev-dependencies]
 pollster = "*"
 tiff = "*"
+ndarray = "*"
 
 
 [features]
