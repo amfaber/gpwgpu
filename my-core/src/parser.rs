@@ -729,6 +729,13 @@ impl<'a> From<&'a str> for Definition<'a>{
         Definition::Any(value.into())
     }
 }
+
+impl<'a> From<String> for Definition<'a>{
+    fn from(value: String) -> Self {
+        Definition::Any(value.into())
+    }
+}
+
 impl<'a> From<f32> for Definition<'a>{
     fn from(value: f32) -> Self {
         Definition::Float(value)
