@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 #[allow(unused)]
-use my_core::shaderpreprocessor::{load_shaders_dyn, ShaderProcessor};
+use my_core::shaderpreprocessor::ShaderProcessor;
 
 use my_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline}, parser::{Definition, ExpansionError}, utils::{FullComputePass, any_as_u8_slice}};
 

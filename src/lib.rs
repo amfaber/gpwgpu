@@ -1,4 +1,4 @@
-pub use macros::parse_shaders;
+pub use macros::{parse_shaders, parse_shaders_dyn};
 pub use my_core::*;
 pub mod operations;
 

@@ -7,7 +7,7 @@ use gpwgpu::{
         convolutions::{GaussianSmoothing, GaussianLaplace},
         reductions::{Reduce, ReductionType, StandardDeviationReduce},
     },
-    parser::{parse_tokens, Token, process, Definition, trim_trailing_spaces},
+    parser::{parse_tokens, Token, process, Definition, trim_trailing_spaces, NestedFor},
     shaderpreprocessor::{ShaderProcessor, ShaderSpecs, load_shaders_dyn},
     utils::{default_device, inspect_buffers, read_buffer, FullComputePass},
 };
@@ -79,7 +79,7 @@ fn standard_deviation() {
         std.execute(&mut encoder);
         queue.submit(Some(encoder.finish()));
         device.poll(wgpu::MaintainBase::Wait);
-        let result: f32 = read_buffer(&device, &output, ..)[0];
+        let result: f32 = read_buffer(&device, &output, 0, None)[0];
         let mean = contents.iter().sum::<f32>() / n as f32;
         let std = contents.iter().map(|ele| (ele - mean).powi(2)).sum::<f32>() / (n - 1) as f32;
         let std = std.sqrt();
@@ -163,7 +163,7 @@ fn max() {
 
         queue.submit(Some(encoder.finish()));
         device.poll(wgpu::MaintainBase::Wait);
-        let result: f32 = read_buffer(&device, &output, ..)[0];
+        let result: f32 = read_buffer(&device, &output, 0, None)[0];
 
         println!(
             "n: {n}, rel_error: {}, return: {result}, cpu_result: {cpu_result}",
@@ -359,7 +359,7 @@ fn smoothing_3d(){
 
     queue.submit(Some(encoder.finish()));
 
-    let result = read_buffer::<u8, _>(&device, &bufs.readable, ..);
+    let result = read_buffer::<u8>(&device, &bufs.readable, 0, None);
     std::fs::write("tests/dumps/3d_smoothed.bin", &result).unwrap();
 
     // println!("{}", shape);
@@ -514,35 +514,21 @@ fn parser_test() {
     // dbg!(bincode::serialize(&out));
 }
 
-// #[test]
-// fn trim_trailing(){
-//     let data = " - 1] = next_stride;\r\n\t\tnext_stride *= i32(pc.bounds[";
-//     dbg!(trim_trailing_spaces(data));
-// }
+#[test]
+fn nested_for(){
+    let data = "#nest I = N { for (var i#I: i32 = #I; i#I < 2*#I; i += 1) }
+    #pre { 1+1; }
+    #inner { #concat I in 0..N {pow(f32(i#I), 2.)} { + } }";
 
-// #[test]
-// fn parser_macro(){
-//     let now = std::time::Instant::now();
-//     let mut hashmap = parse_shaders!("tests/parser_test_shaders");
-//     let defs = HashMap::from([
-//         ("WG_X", Definition::UInt(256)),
-//         ("WG_Y", Definition::UInt(1)),
-//         ("WG_Z", Definition::UInt(1)),
-//         ("TEST", Definition::UInt(256)),
-//         ("N_COL", Definition::UInt(256)),
-//     ]);
-//     let tokens = hashmap.remove("first").unwrap();
-//     // let mut many_tokens = Vec::new();
-//     // for _ in 0..1e6 as usize{
-//     //     many_tokens.push(tokens.clone());
-//     // }
-//     // for tokens in many_tokens{
-//     //     process(tokens.clone(), |s| defs.get(s).cloned()).unwrap();
-//     // }
     
-//     for _ in 0..1e3 as usize{
-//         process(tokens.clone(), |s| defs.get(s).cloned()).unwrap();
-//     }
-//     dbg!(now.elapsed());
-// }
+    let (_input, tokens) = parse_tokens(data).unwrap();
+    dbg!(&tokens);
+
+    println!("{}", process(tokens, |_s| Some(Definition::Int(3))).unwrap());
+
+    // let nested_for = Token::NestedFor(NestedFor{
+    //     "I", "N", Token::Code()
+    // })
+    
+}
 

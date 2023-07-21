@@ -6,24 +6,18 @@ use wgpu::{self, util::DeviceExt};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
 
-pub fn read_buffer<T: bytemuck::Pod, R: RangeBounds<wgpu::BufferAddress>>(
+pub fn read_buffer<T: bytemuck::Pod>(
     device: &wgpu::Device,
     mappable_buffer: &wgpu::Buffer,
-    read_range: R,
+    offset: u64,
+    n_items: Option<u64>,
 ) -> Vec<T> {
     let byte_size = size_of::<T>() as wgpu::BufferAddress;
-    let start = match read_range.start_bound(){
-        Bound::Included(val) => Bound::Included(val * byte_size),
-        Bound::Excluded(val) => Bound::Excluded(val * byte_size),
-        Bound::Unbounded => Bound::Unbounded,
+    let end = match n_items{
+        Some(n) => Bound::Excluded(offset + n * byte_size),
+        None => Bound::Unbounded,
     };
-
-    let end = match read_range.end_bound(){
-        Bound::Included(val) => Bound::Included(val * byte_size),
-        Bound::Excluded(val) => Bound::Excluded(val * byte_size),
-        Bound::Unbounded => Bound::Unbounded,
-    };
-    let slice = mappable_buffer.slice((start, end));
+    let slice = mappable_buffer.slice((Bound::Included(offset), end));
     let (sender, receiver) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |res| {
         let _ = sender.send(res);

@@ -1,10 +1,10 @@
-use crate::{utils::{infer_compute_bindgroup_layout, Dispatcher, WorkgroupSize}, parser::{Token, Definition, parse_tokens, process, NomError}};
+use crate::{utils::{infer_compute_bindgroup_layout, Dispatcher, WorkgroupSize}, parser::{Token, Definition, parse_tokens, process, NomError, vec_to_owned}};
 use std::{
     borrow::Cow,
     collections::HashMap,
     fs::DirEntry,
     path::Path,
-    rc::Rc,
+    rc::Rc, fmt::Write,
 };
 
 #[derive(Debug)]
@@ -111,10 +111,26 @@ impl<'wg: 'def, 'def> ShaderSpecs<'wg, 'def> {
 
 /// A processed [Shader]. This cannot contain preprocessor directions. It must be "ready to compile"
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct ProcessedShader<'a, 'def> {
     pub source: String,
     pub specs: ShaderSpecs<'a, 'def>,
+}
+
+impl<'a, 'def> std::fmt::Debug for ProcessedShader<'a, 'def>{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = "\n".to_string();
+
+        let n_lines = self.source.lines().count() as f32;
+        
+        let pad = (n_lines.log10() + 1.0).floor() as usize;
+        
+        for (i, line) in self.source.lines().enumerate(){
+            write!(&mut s, "{: >width$} {line}\n", i + 1, width = pad).unwrap();
+        }
+        
+        f.write_str(&s)
+    }
 }
 
 impl<'a, 'def> ProcessedShader<'a, 'def> {
@@ -164,10 +180,16 @@ impl<'a, 'def> ProcessedShader<'a, 'def> {
 #[derive(Debug)]
 pub struct ParsedShader<'a>(pub Vec<Token<'a>>);
 
+impl<'a> ParsedShader<'a>{
+    fn into_owned(self) -> ParsedShader<'static>{
+        ParsedShader(vec_to_owned(self.0))
+    }
+}
+
 
 
 #[derive(Debug)]
-pub struct ShaderProcessor<'a>(pub HashMap<&'a str, ParsedShader<'a>>);
+pub struct ShaderProcessor<'a>(pub HashMap<Cow<'a, str>, ParsedShader<'a>>);
 
 
 pub fn validate_wgsl_file(
@@ -195,29 +217,40 @@ pub fn validate_wgsl_file(
     Some((name, path))
 }
 
-pub fn load_shaders_dyn(
-    path: impl AsRef<Path>,
-) -> Result<HashMap<String, String>, std::io::Error> {
-    let read_dir = std::fs::read_dir(path)?;
-    Ok(read_dir.filter_map(|file| {
-        validate_wgsl_file(file, false).and_then(|(name, path)|{
-            Some((name, std::fs::read_to_string(path).ok()?))
-        })
-    }).collect())
-}
 
 pub fn parse_shader(input: &str) -> Result<ParsedShader, NomError>{
     nom_supreme::final_parser::final_parser(parse_tokens)(input).map(ParsedShader)
 }
 
 impl<'a> ShaderProcessor<'a> {
-
+    pub fn load_dir_dyn(
+        path: impl AsRef<Path>,
+    ) -> Result<Self, std::io::Error> {
+        let read_dir = std::fs::read_dir(path)?;
+        Ok(Self(read_dir.filter_map(|file| {
+            validate_wgsl_file(file, false).and_then(|(name, path)|{
+                let source = std::fs::read_to_string(path).ok()?;
+                Some((name, source))
+            })
+        })
+        .map(|(name, source)|{
+                let parsed = match parse_shader(&source){
+                    Ok(val) => val,
+                    Err(e) => {
+                        println!("Failed parsing of shader {name}");
+                        panic!("{}", e);
+                    },
+                };
+                (name.into(), parsed.into_owned())
+            })
+        .collect()))
+    }
     pub fn from_shader_hashmap(
-        shaders: &'a HashMap<String, String>,
+        shaders: &'a HashMap<Cow<'a, str>, String>,
     ) -> Result<ShaderProcessor, (String, NomError)> {
         shaders.iter().map(|(name, source)| {
-            Ok((name.as_str(), parse_shader(&source).map_err(|err| (name.to_string(), err))?))
-        }).collect::<Result<HashMap<&str, ParsedShader>, (String, NomError)>>().map(ShaderProcessor)
+            Ok((name.clone(), parse_shader(&source).map_err(|err| (name.to_string(), err))?))
+        }).collect::<Result<HashMap<Cow<str>, ParsedShader>, (String, NomError)>>().map(ShaderProcessor)
     }
     
     pub fn process_by_name<'wg, 'def>(

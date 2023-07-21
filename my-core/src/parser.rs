@@ -473,6 +473,15 @@ pub enum Else<'a>{
     If(Box<If<'a>>),
 }
 
+impl<'a> Else<'a>{
+    fn into_owned(self) -> Else<'static>{
+        match self{
+            Else::Block(tokens) => Else::Block(vec_to_owned(tokens)),
+            Else::If(if_tok) => Else::If(Box::new((*if_tok).into_owned())),
+        }
+    }
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct If<'a>{
     #[serde(borrow)]
@@ -481,19 +490,102 @@ pub struct If<'a>{
     else_tokens: Option<Else<'a>>,
 }
 
+impl<'a> If<'a>{
+    fn into_owned(self) -> If<'static>{
+        If{
+            condition: self.condition.into_owned(),
+            tokens: vec_to_owned(self.tokens),
+            else_tokens: self.else_tokens.map(|e| e.into_owned())
+        }
+    }
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct For<'a>{
-    ident: &'a str,
+    #[serde(borrow)]
+    ident: Cow<'a, str>,
     range: Range<'a>,
     tokens: Vec<Token<'a>>,
 }
 
+impl<'a> For<'a>{
+    fn into_owned(self) -> For<'static>{
+        For{
+            ident: Cow::Owned(self.ident.into_owned()),
+            range: self.range.into_owned(),
+            tokens: vec_to_owned(self.tokens),
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct NestedFor<'a>{
+    #[serde(borrow)]
+    running_ident: Cow<'a, str>,
+    total_ident: Cow<'a, str>,
+    to_nest: Vec<Token<'a>>,
+    pre: Vec<Token<'a>>,
+    inner: Vec<Token<'a>>,
+}
+
+impl<'a> NestedFor<'a>{
+    fn into_owned(self) -> NestedFor<'static>{
+        NestedFor{
+            running_ident: Cow::Owned(self.running_ident.into_owned()),
+            total_ident: Cow::Owned(self.total_ident.into_owned()),
+            to_nest: vec_to_owned(self.to_nest),
+            pre: vec_to_owned(self.pre),
+            inner: vec_to_owned(self.inner),
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct Concat<'a>{
+    #[serde(borrow)]
+    ident: Cow<'a, str>,
+    range: Range<'a>,
+    tokens: Vec<Token<'a>>,
+    separator: Vec<Token<'a>>,
+}
+
+impl<'a> Concat<'a>{
+    fn into_owned(self) -> Concat<'static>{
+        Concat{
+            ident: Cow::Owned(self.ident.into_owned()),
+            range: self.range.into_owned(),
+            tokens: vec_to_owned(self.tokens),
+            separator: vec_to_owned(self.separator),
+        }
+    }
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub enum Token<'a> {
-    Code(&'a str),
-    Ident(&'a str),
+    #[serde(borrow)]
+    Code(Cow<'a, str>),
+    Ident(Cow<'a, str>),
     If(If<'a>),
-    For(For<'a>)
+    For(For<'a>),
+    NestedFor(NestedFor<'a>),
+    Concat(Concat<'a>)
+}
+
+pub fn vec_to_owned<'a>(tokens: Vec<Token<'a>>) -> Vec<Token<'static>>{
+    tokens.into_iter().map(|token| token.into_owned()).collect()
+}
+
+impl<'a> Token<'a>{
+    fn into_owned(self) -> Token<'static>{
+        match self{
+            Token::Code(cow) => Token::Code(Cow::Owned(cow.to_string())),
+            Token::Ident(cow) => Token::Ident(Cow::Owned(cow.to_string())),
+            Token::If(if_tok) => Token::If(if_tok.into_owned()),
+            Token::For(for_tok) => Token::For(for_tok.into_owned()),
+            Token::NestedFor(nested) => Token::NestedFor(nested.into_owned()),
+            Token::Concat(concat) => Token::Concat(concat.into_owned()),
+        }
+    }
 }
 
 fn parse_comment(input: &str) -> IResult<&str, &str, NomError> {
@@ -518,7 +610,7 @@ fn parse_shader_code(input: &str) -> IResult<&str, Option<Token>, NomError> {
         Ok((input, None))
     } else {
         let code = trim_trailing_spaces(code);
-        Ok((input, Some(Token::Code(code))))
+        Ok((input, Some(Token::Code(code.into()))))
     }
 }
 
@@ -530,7 +622,7 @@ fn parse_ident_token(input: &str) -> IResult<&str, Token, NomError> {
                 alt((alpha1, tag("_"))),
                 many0_count(alt((alphanumeric1, tag("_")))),
             )),
-            Token::Ident,
+            |s: &str| Token::Ident(s.into()),
         ),
     )(input)
 }
@@ -580,7 +672,6 @@ fn parse_if(input: &str) -> IResult<&str, Token, NomError> {
     let (input, condition) = cut(parse_expr)(input)?;
     
     // FIXME unwrap on simplify error. This should be propagated.
-    // let condition = condition.simplify_without_ident()?;
     let condition = condition.simplify_without_ident().unwrap();
 
     let (input, inner_tokens) = cut(parse_inner)(input)?;
@@ -653,6 +744,60 @@ fn parse_for(input: &str) -> IResult<&str, Token, NomError> {
     Ok((input, result))
 }
 
+fn parse_concat(input: &str) -> IResult<&str, Token, NomError> {
+    let (input, _) = tag("concat")(input)?;
+
+    let (input, Token::Ident(ident)) = cut(parse_ident_token)(input)? else { unreachable!() };
+
+    let (input, _) = cut(
+        preceded(multispace0,
+        tag("in"))
+    )(input)?;
+
+    let (input, range) = cut(parse_range)(input)?;
+
+    let (input, inner) = cut(parse_inner)(input)?;
+    
+    let (input, separator) = cut(parse_inner)(input)?;
+
+    let result = Token::Concat(Concat{
+        ident,
+        range,
+        tokens: inner,
+        separator,
+    });
+    Ok((input, result))
+}
+
+fn parse_nest(input: &str) -> IResult<&str, Token, NomError> {
+    let (input, _) = tag("nest")(input)?;
+
+    let (input, Token::Ident(running_ident)) = cut(parse_ident_token)(input)? else { unreachable!() };
+
+    let (input, _) = cut(preceded(multispace0, char('=')))(input)?;
+
+    let (input, Token::Ident(total_ident)) = cut(parse_ident_token)(input)? else { unreachable!() };
+    
+    let (input, to_nest) = cut(parse_inner)(input)?;
+
+    let (input, _) = cut(preceded(multispace0, tag("#pre")))(input)?;
+    
+    let (input, pre) = cut(parse_inner)(input)?;
+    
+    let (input, _) = cut(preceded(multispace0, tag("#inner")))(input)?;
+    
+    let (input, inner) = cut(parse_inner)(input)?;
+
+    let result = Token::NestedFor(NestedFor{
+        running_ident,
+        total_ident,
+        to_nest,
+        pre,
+        inner,
+    });
+    Ok((input, result))
+}
+
 pub fn parse_tokens(mut input: &str) -> IResult<&str, Vec<Token>, NomError> {
     let mut out = Vec::new();
 
@@ -670,6 +815,8 @@ pub fn parse_tokens(mut input: &str) -> IResult<&str, Vec<Token>, NomError> {
         let (new_input, token) = alt((
             parse_if,
             parse_for,
+            parse_concat,
+            parse_nest,
             parse_ident_token,
         ))(input)?;
         out.push(token);
@@ -690,6 +837,7 @@ pub enum ExpansionError{
     SimplifyError(EvalError),
     NonBoolCondition(Expr<'static>),
     NonNumRange(Range<'static>),
+    ExpectedNumber(Definition<'static>)
 }
 
 impl<'a> From<EvalError> for ExpansionError{
@@ -706,6 +854,19 @@ pub enum Definition<'def> {
     Any(Cow<'def, str>),
     Float(f32),
 }
+
+impl<'def> Definition<'def>{
+    fn new_owned(&self) -> Definition<'static>{
+        match self{
+            Definition::Bool(v) => Definition::Bool(*v),
+            Definition::Int(v) => Definition::Int(*v),
+            Definition::UInt(v) => Definition::UInt(*v),
+            Definition::Any(cow) => Definition::Any(Cow::Owned(cow.to_string())),
+            Definition::Float(v) => Definition::Float(*v),
+        }
+    }
+}
+
 impl<'a> From<bool> for Definition<'a>{
     fn from(value: bool) -> Self {
         Definition::Bool(value)
@@ -863,6 +1024,99 @@ fn process_for<'a, 'def>(
     Ok(())
 }
 
+fn process_nested_for<'a, 'def>(
+    input: NestedFor<'a>,
+    result: &mut String,
+    lookup: &impl Fn(Cow<str>) -> Option<Definition<'def>>,
+) -> Result<(), ExpansionError>{
+    let NestedFor { running_ident, total_ident, to_nest, pre, inner } = input;
+    
+    let total_depth = lookup(total_ident.clone()).ok_or_else(|| ExpansionError::IdentNotFound(total_ident.to_string()))?;
+    
+    let total_depth = match total_depth{
+        Definition::Bool(_) | Definition::Any(_) => return Err(ExpansionError::ExpectedNumber(total_depth.new_owned())),
+        Definition::Int(num) => num as usize,
+        Definition::UInt(num) => num as usize,
+        Definition::Float(num) => num as usize,
+    };
+    
+    for val in 0..total_depth{
+        let new_lookup = Box::new(|s: Cow<str>| -> Option<Definition<'def>>{
+            if s == running_ident{
+                Some(Definition::Int(val as i32))
+            } else {
+                lookup(s)
+            }
+        }) as Box<dyn Fn(Cow<str>) -> Option<Definition<'def>>>;
+        
+        process_internal(to_nest.clone(), result, &new_lookup)?;
+        result.push_str("{\n");
+        process_internal(pre.clone(), result, &new_lookup)?;
+        result.push('\n');
+    }
+    
+    process_internal(inner, result, lookup)?;
+    
+    for _ in 0..total_depth{
+        result.push_str("\n}")
+    }
+    
+    Ok(())
+}
+
+fn process_concat<'a, 'def>(
+    input: Concat<'a>,
+    result: &mut String,
+    lookup: &impl Fn(Cow<str>) -> Option<Definition<'def>>,
+) -> Result<(), ExpansionError>{
+    let Concat { ident, range, tokens, separator } = input;
+    
+    let expr_lookup = make_expr_lookup!(lookup);
+
+    let range = match range{
+        Range::Exclusive((expr1, expr2)) => {
+            let expr1 = expr1.simplify(expr_lookup)?;
+            let expr2 = expr2.simplify(expr_lookup)?;
+            Range::Exclusive((expr1, expr2))
+        },
+        Range::Inclusive((expr1, expr2)) => {
+            let expr1 = expr1.simplify(expr_lookup)?;
+            let expr2 = expr2.simplify(expr_lookup)?;
+            Range::Inclusive((expr1, expr2))
+        },
+    };
+
+    let iter = match range{
+        Range::Exclusive((Expr::Num(start), Expr::Num(end))) => {
+            Box::new(start as isize..end as isize) as Box<dyn Iterator<Item = isize>>
+        },
+        Range::Inclusive((Expr::Num(start), Expr::Num(end))) => {
+            Box::new(start as isize..=end as isize) as Box<dyn Iterator<Item = isize>>
+        },
+        _ => return Err(ExpansionError::NonNumRange(range.into_owned()))
+    };
+    let mut iter = iter.peekable();
+
+    while let Some(val) = iter.next(){
+        let new_lookup = Box::new(|s: Cow<str>| -> Option<Definition<'def>>{
+            if s == ident{
+                Some(Definition::Int(val as i32))
+            } else {
+                lookup(s)
+            }
+        }) as Box<dyn Fn(Cow<str>) -> Option<Definition<'def>>>;
+        
+        process_internal(tokens.clone(), result, &new_lookup)?;
+
+        if iter.peek().is_some(){
+            process_internal(separator.clone(), result, &new_lookup)?;
+        }
+        
+    }
+    Ok(())
+}
+
+
 fn process_internal<'a, 'def>(
     tokens: Vec<Token<'a>>,
     result: &mut String,
@@ -870,9 +1124,9 @@ fn process_internal<'a, 'def>(
 ) -> Result<(), ExpansionError>{
     for token in tokens{
         match token{
-            Token::Code(code) => result.push_str(code),
+            Token::Code(code) => result.push_str(&code),
             Token::Ident(name) => {
-                let Some(shader_def) = lookup(name.into()) else { return Err(ExpansionError::IdentNotFound(name.to_string()))};
+                let Some(shader_def) = lookup(name.clone()) else { return Err(ExpansionError::IdentNotFound(name.to_string()))};
                 let string = String::from(shader_def);
                 if let Ok((_, tokens)) = parse_tokens(&string){
                     process_internal(tokens, result, lookup)?;
@@ -884,6 +1138,8 @@ fn process_internal<'a, 'def>(
                 process_if(if_tokens, result, lookup)?;
             },
             Token::For(for_tokens) => process_for(for_tokens, result, lookup)?,
+            Token::NestedFor(nested_for) => process_nested_for(nested_for, result, lookup)?,
+            Token::Concat(concat) => process_concat(concat, result, lookup)?,
         }
     }
     Ok(())
