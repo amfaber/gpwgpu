@@ -1,6 +1,6 @@
 // use std::collections::HashMap;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Write};
 
 // use crate::shaderpreprocessor::*;
 use nom::{
@@ -26,6 +26,7 @@ pub enum Expr<'a> {
     Num(f64),
     Ident(Cow<'a, str>),
     Neg(Box<Expr<'a>>),
+    Not(Box<Expr<'a>>),
 
     Mul(Box<Expr<'a>>, Box<Expr<'a>>),
     Div(Box<Expr<'a>>, Box<Expr<'a>>),
@@ -59,6 +60,7 @@ impl<'a> Expr<'a>{
             Expr::Num(n) => Expr::Num(n),
             Expr::Ident(cow) => Expr::Ident(Cow::Owned(cow.into_owned())),
             Expr::Neg(e) => Expr::Neg(Box::new(e.into_owned())),
+            Expr::Not(e) => Expr::Not(Box::new(e.into_owned())),
             Expr::Mul(e1, e2) => Expr::Mul(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
             Expr::Div(e1, e2) => Expr::Div(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
             Expr::Add(e1, e2) => Expr::Add(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
@@ -107,6 +109,14 @@ impl<'a> Expr<'a> {
                     Expr::Num(n) => Expr::Num(-n),
                     Expr::Bool(_) => return Err(EvalError::BoolInMath),
                     _ => Expr::Neg(Box::new(inner)),
+                }
+            }
+            Expr::Not(inner) => {
+                let inner = inner.simplify_internal(lookup)?;
+                match inner {
+                    Expr::Num(_) => return Err(EvalError::NumberInLogic),
+                    Expr::Bool(b) => Expr::Bool(!b),
+                    _ => Expr::Not(Box::new(inner)),
                 }
             }
 
@@ -194,9 +204,9 @@ impl<'a> Expr<'a> {
                 let right = right.simplify_internal(lookup)?;
                 match (left, right) {
                     (Expr::Num(n1), Expr::Num(n2)) => Expr::Bool(n1 == n2),
+                    (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 == b2),
                     (Expr::Num(_), Expr::Bool(_)) => return Err(EvalError::BoolInMath),
                     (Expr::Bool(_), Expr::Num(_)) => return Err(EvalError::NumberInLogic),
-                    (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 == b2),
                     (left, right) => Expr::Equal(Box::new(left), Box::new(right)),
                 }
             }
@@ -212,21 +222,29 @@ impl<'a> Expr<'a> {
 
             Expr::And(left, right) => {
                 let left = left.simplify_internal(lookup)?;
-                let right = right.simplify_internal(lookup)?;
-                match (left, right) {
-                    (Expr::Num(_), _) | (_, Expr::Num(_)) => return Err(EvalError::NumberInLogic),
-                    (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 && b2),
-                    (left, right) => Expr::And(Box::new(left), Box::new(right)),
+                if matches!(left, Expr::Bool(false)){
+                    Expr::Bool(false)
+                } else {
+                    let right = right.simplify_internal(lookup)?;
+                    match (left, right) {
+                        (Expr::Num(_), _) | (_, Expr::Num(_)) => return Err(EvalError::NumberInLogic),
+                        (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 && b2),
+                        (left, right) => Expr::And(Box::new(left), Box::new(right)),
+                    }
                 }
             }
 
             Expr::Or(left, right) => {
                 let left = left.simplify_internal(lookup)?;
-                let right = right.simplify_internal(lookup)?;
-                match (left, right) {
-                    (Expr::Num(_), _) | (_, Expr::Num(_)) => return Err(EvalError::NumberInLogic),
-                    (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 || b2),
-                    (left, right) => Expr::Or(Box::new(left), Box::new(right)),
+                if matches!(left, Expr::Bool(true)){
+                    Expr::Bool(true)
+                } else {
+                    let right = right.simplify_internal(lookup)?;
+                    match (left, right) {
+                        (Expr::Num(_), _) | (_, Expr::Num(_)) => return Err(EvalError::NumberInLogic),
+                        (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 || b2),
+                        (left, right) => Expr::Or(Box::new(left), Box::new(right)),
+                    }
                 }
             }
         };
@@ -281,8 +299,15 @@ fn parse_neg(input: &str) -> IResult<&str, Expr, NomError> {
     )(input)
 }
 
+fn parse_not(input: &str) -> IResult<&str, Expr, NomError> {
+    map(
+        preceded(multispace0, pair(char('!'), parse_factor)),
+        |(_, expr)| Expr::Not(Box::new(expr)),
+    )(input)
+}
+
 fn parse_factor(input: &str) -> IResult<&str, Expr, NomError> {
-    alt((parse_bool, parse_ident, parse_num, parse_neg, parse_parens))(input)
+    alt((parse_bool, parse_ident, parse_num, parse_neg, parse_not, parse_parens))(input)
 }
 
 fn parse_mul_div(input: &str) -> IResult<&str, Expr, NomError> {
@@ -394,6 +419,18 @@ fn parse_or(input: &str) -> IResult<&str, Expr, NomError> {
 
 pub fn parse_expr(input: &str) -> IResult<&str, Expr, NomError> {
     parse_or(input)
+}
+
+fn parse_token_expr(input: &str) -> IResult<&str, Token, NomError>{
+    let (input, _) = preceded(multispace0, tag("expr"))(input)?;
+
+    let (input, inner) = cut(get_inner)(input)?;
+
+    let (_, expr) = cut(parse_expr)(inner)?;
+
+    let expr = Token::Expr(expr);
+
+    Ok((input, expr))
 }
 
 // https://stackoverflow.com/questions/70630556/parse-allowing-nested-parentheses-in-nom
@@ -565,6 +602,7 @@ pub enum Token<'a> {
     #[serde(borrow)]
     Code(Cow<'a, str>),
     Ident(Cow<'a, str>),
+    Expr(Expr<'a>),
     If(If<'a>),
     For(For<'a>),
     NestedFor(NestedFor<'a>),
@@ -580,6 +618,7 @@ impl<'a> Token<'a>{
         match self{
             Token::Code(cow) => Token::Code(Cow::Owned(cow.to_string())),
             Token::Ident(cow) => Token::Ident(Cow::Owned(cow.to_string())),
+            Token::Expr(expr) => Token::Expr(expr.into_owned()),
             Token::If(if_tok) => Token::If(if_tok.into_owned()),
             Token::For(for_tok) => Token::For(for_tok.into_owned()),
             Token::NestedFor(nested) => Token::NestedFor(nested.into_owned()),
@@ -651,17 +690,24 @@ pub fn trim_trailing_spaces(input: &str) -> &str {
     &input[..input.len() - trailing_spaces]
 }
 
-fn parse_inner(input: &str) -> IResult<&str, Vec<Token>, NomError>{
+fn get_inner(input: &str) -> IResult<&str, &str, NomError>{
     let (input, inner) = 
-        cut(delimited(
+        delimited(
             preceded(multispace0, tag("{")),
             preceded(eat_newline, take_until_unbalanced('{', '}')),
             tag("}"),
-        ))(input)?;
+        )(input)?;
 
     let (inner, _) = eat_newline(trim_trailing_spaces(inner))?;
+    
+    Ok((input, inner))
+}
 
-    let (_, inner_tokens) = parse_tokens(inner)?;
+fn parse_inner(input: &str) -> IResult<&str, Vec<Token>, NomError>{
+    
+    let (input, inner) = cut(get_inner)(input)?;
+
+    let (_, inner_tokens) = cut(parse_tokens)(inner)?;
 
     Ok((input, inner_tokens))
 }
@@ -813,6 +859,7 @@ pub fn parse_tokens(mut input: &str) -> IResult<&str, Vec<Token>, NomError> {
         input = new_input;
         // Parse directive
         let (new_input, token) = alt((
+            parse_token_expr,
             parse_if,
             parse_for,
             parse_concat,
@@ -837,6 +884,7 @@ pub enum ExpansionError{
     SimplifyError(EvalError),
     NonBoolCondition(Expr<'static>),
     NonNumRange(Range<'static>),
+    NonBoolOrNumExpr(Expr<'static>),
     ExpectedNumber(Definition<'static>)
 }
 
@@ -911,16 +959,20 @@ impl<'def> Default for Definition<'def>{
 
 impl<'def> From<Definition<'def>> for String {
     fn from(value: Definition) -> Self {
-        match value{
-            Definition::Bool(def) => def.to_string(),
-            Definition::Int(def) => def.to_string(),
-            Definition::UInt(def) => {
-                let mut out = def.to_string();
-                out.push('u');
-                out
-            }
-            Definition::Float(def) => format!("{:.1}", def),
-            Definition::Any(def) => def.to_string(),
+        let mut out = String::new();
+        value.insert_in_string(&mut out).unwrap();
+        out
+    }
+}
+
+impl<'def> Definition<'def>{
+    fn insert_in_string(&self, target: &mut String) -> Result<(), std::fmt::Error>{
+        match self{
+            Definition::Bool(def) => write!(target, "{def}"),
+            Definition::Int(def) => write!(target, "{def}"),
+            Definition::UInt(def) => write!(target, "{def}u"),
+            Definition::Float(def) => write!(target, "{def:.1}"),
+            Definition::Any(def) => write!(target, "{def}"),
         }
     }
 }
@@ -957,7 +1009,7 @@ fn process_if<'a, 'def>(
     } = input;
 
     let condition = condition
-        .simplify_internal(&expr_lookup).unwrap();
+        .simplify_internal(&expr_lookup)?;
     match condition{
         Expr::Bool(true) => process_internal(tokens, result, lookup),
         Expr::Bool(false) => {
@@ -1131,7 +1183,16 @@ fn process_internal<'a, 'def>(
                 if let Ok((_, tokens)) = parse_tokens(&string){
                     process_internal(tokens, result, lookup)?;
                 } else{
-                    result.push_str(&string);
+                    write!(result, "{}", string).expect("We couldn't write to a string?");
+                }
+            },
+            Token::Expr(expr) => {
+                let expr_lookup = make_expr_lookup!(lookup);
+                let simplified_expr = expr.simplify_internal(&expr_lookup)?;
+                match simplified_expr{
+                    Expr::Bool(b) => write!(result, "{}", b).expect("We couldn't write to a string?"),
+                    Expr::Num(n) => write!(result, "{}", n).expect("We couldn't write to a string?"),
+                    _  => return Err(ExpansionError::NonBoolOrNumExpr(simplified_expr.into_owned())),
                 }
             },
             Token::If(if_tokens) => {

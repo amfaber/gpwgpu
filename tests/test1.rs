@@ -8,7 +8,7 @@ use gpwgpu::{
         reductions::{Reduce, ReductionType, StandardDeviationReduce},
     },
     parser::{parse_tokens, Token, process, Definition, trim_trailing_spaces, NestedFor},
-    shaderpreprocessor::{ShaderProcessor, ShaderSpecs, load_shaders_dyn},
+    shaderpreprocessor::{ShaderProcessor, ShaderSpecs},
     utils::{default_device, inspect_buffers, read_buffer, FullComputePass},
 };
 use macros::*;
@@ -18,17 +18,6 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BufferDescriptor, BufferUsages,
 };
-
-#[test]
-fn debug_parser(){
-    let shaders = load_shaders_dyn("src/operations/shaders").unwrap();
-    let pp = ShaderProcessor::from_shader_hashmap(&shaders);
-    // println!()
-    if let Err((name, err)) = pp{
-        dbg!(name);
-        panic!("{}", err);
-    }
-}
 
 #[test]
 fn standard_deviation() {
@@ -525,10 +514,27 @@ fn nested_for(){
     dbg!(&tokens);
 
     println!("{}", process(tokens, |_s| Some(Definition::Int(3))).unwrap());
-
-    // let nested_for = Token::NestedFor(NestedFor{
-    //     "I", "N", Token::Code()
-    // })
-    
 }
 
+#[test]
+fn not(){
+    let data = "#if !TEST{
+        Hi
+    }
+    outside";
+    let (_input, tokens) = parse_tokens(data).unwrap();
+
+    dbg!(process(tokens.clone(), |_s| Some(Definition::Bool(true))).unwrap().as_str());
+
+    dbg!(process(tokens, |_s| Some(Definition::Bool(false))).unwrap());
+}
+
+#[test]
+fn parse_expr(){
+    let data = "#expr{ 1 + N }";
+
+    let (_input, tokens) = parse_tokens(data).unwrap();
+
+    dbg!(process(tokens.clone(), |_s| Some(Definition::Int(5))).unwrap().as_str());
+
+}

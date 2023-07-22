@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, ops::Deref};
 
 #[allow(unused)]
 use my_core::shaderpreprocessor::ShaderProcessor;
@@ -7,31 +7,44 @@ use my_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline}, parser::{Defi
 
 use super::PREPROCESSOR;
 
-pub fn rotate_dims<const N: usize>(dims: &mut [i32; N]){
+pub fn rotate_dims_right<const N: usize>(dims: &mut [i32; N]){
     let old_dims = dims.clone();
+    
     dims[0] = old_dims[N-1];
     for i in 1..N{
         dims[i] = old_dims[i - 1];
     }
 }
 
+pub fn rotate_dims_left<const N: usize>(dims: &mut [i32; N]){
+    let old_dims = dims.clone();
+    for i in 0..N-1{
+        dims[i] = old_dims[i + 1];
+    }
+    dims[N-1] = old_dims[0];
+}
+
+// FIXME I have no idea what this thing does in 1D.
 pub struct SeparableConvolution<const N: usize>{
     input_pass: FullComputePass,
     temp_pass: [FullComputePass; 2],
+    last_pass: FullComputePass,
     dims: [i32; N],
 }
 
 impl<const N: usize> SeparableConvolution<N>{
-    pub fn from_two_pipelines<'buf, 'proc>(
+    pub fn from_three_pipelines<'buf, 'proc>(
         device: &wgpu::Device,
         first_pipeline: Rc<NonBoundPipeline>,
         pipeline: Rc<NonBoundPipeline>,
+        last_pipeline: Rc<NonBoundPipeline>,
         dims: [i32; N],
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
         output: &wgpu::Buffer,
         first_additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
         additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
+        last_additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
     ) -> Result<Self, ExpansionError> {
         
         let input_pass = {
@@ -66,7 +79,16 @@ impl<const N: usize> SeparableConvolution<N>{
             FullComputePass::new(device, Rc::clone(&pipeline), &bindgroup)
         };
 
-        let temp_pass = if N % 2 == 0{
+        let last_pass = {
+            let mut bindgroup = vec![(0, temp), (1, output)];
+            bindgroup.extend(last_additional_buffers.into_iter()
+                .enumerate()
+                .map(|(i, buffer)| ((i + 2) as u32, buffer))
+            );
+            FullComputePass::new(device, Rc::clone(&last_pipeline), &bindgroup)
+        };
+
+        let temp_passes = if N % 2 == 0{
             [temp_pass, output_pass]
         } else {
             [output_pass, temp_pass]
@@ -74,8 +96,9 @@ impl<const N: usize> SeparableConvolution<N>{
 
         Ok(Self{
             input_pass,
-            temp_pass,
+            temp_pass: temp_passes,
             dims,
+            last_pass,
         })
     }
     
@@ -88,14 +111,16 @@ impl<const N: usize> SeparableConvolution<N>{
         output: &wgpu::Buffer,
         additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
     ) -> Result<Self, ExpansionError> {
-        Self::from_two_pipelines(
+        Self::from_three_pipelines(
             device,
+            Rc::clone(&pipeline),
             Rc::clone(&pipeline),
             pipeline,
             dims,
             input,
             temp,
             output,
+            additional_buffers,
             additional_buffers,
             additional_buffers,
         )
@@ -112,21 +137,24 @@ impl<const N: usize> SeparableConvolution<N>{
     pub fn execute_many_push(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        extra_push_constants: [&[u8]; N],
+        extra_push_constants: [impl Deref<Target = [u8]>; N],
     ){
         let mut dims = self.dims.clone();
         let mut push = bytemuck::cast_slice(&dims).to_vec();
-        push.extend_from_slice(extra_push_constants[0]);
+        push.extend_from_slice(extra_push_constants[0].deref());
 
         self.input_pass.execute(encoder, &push);
-        rotate_dims(&mut dims);
-        for i in 0..N-1{
-            let pass = &self.temp_pass[i % 2];
+        rotate_dims_right(&mut dims);
+        for i in 0..(N as i32)-2{
+            let pass = &self.temp_pass[i as usize % 2];
             let mut push = bytemuck::cast_slice(&dims).to_vec();
-            push.extend_from_slice(extra_push_constants[i + 1]);
+            push.extend_from_slice(extra_push_constants[i as usize + 1].deref());
             pass.execute(encoder, &push);
-            rotate_dims(&mut dims);
+            rotate_dims_right(&mut dims);
         }
+        let mut push = bytemuck::cast_slice(&dims).to_vec();
+        push.extend_from_slice(extra_push_constants[N - 1].deref());
+        self.last_pass.execute(encoder, &push);
     }
 }
 
