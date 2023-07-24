@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
-use std::{collections::HashMap, rc::Rc, borrow::Cow, slice::SliceIndex, ops::{RangeBounds, Bound}, mem::size_of};
+use std::{collections::HashMap, rc::Rc, borrow::Cow, ops::Bound, mem::size_of};
 use wgpu::{self, util::DeviceExt};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
@@ -32,7 +32,7 @@ pub fn read_buffer<T: bytemuck::Pod>(
     out
 }
 
-pub trait BindingGroup<'a> {
+pub trait BindingGroup {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -41,7 +41,7 @@ pub trait BindingGroup<'a> {
     ) -> wgpu::BindGroup;
 }
 
-impl<'a> BindingGroup<'a> for [(u32, &'a wgpu::Buffer)] {
+impl<'a> BindingGroup for [(u32, &'a wgpu::Buffer)] {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -64,7 +64,7 @@ impl<'a> BindingGroup<'a> for [(u32, &'a wgpu::Buffer)] {
     }
 }
 
-impl<'a, const N: usize> BindingGroup<'a> for [(u32, &'a wgpu::Buffer); N] {
+impl<'a, const N: usize> BindingGroup for [(u32, &'a wgpu::Buffer); N] {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -87,7 +87,7 @@ impl<'a, const N: usize> BindingGroup<'a> for [(u32, &'a wgpu::Buffer); N] {
     }
 }
 
-impl<'a> BindingGroup<'a> for HashMap<u32, &'a wgpu::Buffer> {
+impl<'a> BindingGroup for HashMap<u32, &'a wgpu::Buffer> {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -110,7 +110,7 @@ impl<'a> BindingGroup<'a> for HashMap<u32, &'a wgpu::Buffer> {
     }
 }
 
-impl<'a> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>] {
+impl<'a> BindingGroup for [wgpu::BindGroupEntry<'a>] {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -125,7 +125,7 @@ impl<'a> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>] {
     }
 }
 
-impl<'a, const N: usize> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>; N] {
+impl<'a, const N: usize> BindingGroup for [wgpu::BindGroupEntry<'a>; N] {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -140,7 +140,7 @@ impl<'a, const N: usize> BindingGroup<'a> for [wgpu::BindGroupEntry<'a>; N] {
     }
 }
 
-impl<'a> BindingGroup<'a> for Vec<(u32, &'a wgpu::Buffer)> {
+impl<'a> BindingGroup for Vec<(u32, &'a wgpu::Buffer)> {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -151,7 +151,7 @@ impl<'a> BindingGroup<'a> for Vec<(u32, &'a wgpu::Buffer)> {
     }
 }
 
-impl<'a> BindingGroup<'a> for Vec<wgpu::BindGroupEntry<'a>> {
+impl<'a> BindingGroup for Vec<wgpu::BindGroupEntry<'a>> {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -162,7 +162,7 @@ impl<'a> BindingGroup<'a> for Vec<wgpu::BindGroupEntry<'a>> {
     }
 }
 
-impl<'a, T: BindingGroup<'a>> BindingGroup<'a> for &T {
+impl<'a, T: BindingGroup> BindingGroup for &T {
     fn binding_group(
         &self,
         device: &wgpu::Device,
@@ -296,7 +296,7 @@ impl FullComputePass {
     pub fn new<'a>(
         device: &wgpu::Device,
         pipeline: Rc<NonBoundPipeline>,
-        bindgroup: &impl BindingGroup<'a>,
+        bindgroup: &impl BindingGroup,
     ) -> Self {
         let bindgroup = bindgroup.binding_group(
             device,

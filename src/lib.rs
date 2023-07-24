@@ -7,3 +7,5 @@ pub use once_cell::sync::Lazy;
 pub use bincode;
 
 pub use parser::ExpansionError;
+
+pub mod automatic_buffers;

@@ -44,6 +44,7 @@ impl<'wg> Reduce<'wg> {
     pub fn new<'buf, 'proc>(
         device: &wgpu::Device,
         input: &wgpu::Buffer,
+        // FIXME annotate size of this buffer. Perhaps even check and fail if not sufficient
         temp: Option<&wgpu::Buffer>,
         output: &wgpu::Buffer,
         size: usize,
