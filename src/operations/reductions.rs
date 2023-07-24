@@ -28,6 +28,7 @@ impl ReductionType {
     }
 }
 
+#[derive(Debug)]
 pub struct Reduce<'wg> {
     outplace_pass: Option<FullComputePass>,
     inplace_pass: FullComputePass,
@@ -193,6 +194,7 @@ impl<'wg> Reduce<'wg> {
     }
 }
 
+#[derive(Debug)]
 struct MeanReduce<'wg> {
     reduction: Reduce<'wg>,
 }
@@ -254,6 +256,7 @@ var<storage, read> mean_divisor: u32;"
     }
 }
 
+#[derive(Debug)]
 pub struct StandardDeviationReduce<'wg> {
     mean: MeanReduce<'wg>,
     square_residuals: FullComputePass,

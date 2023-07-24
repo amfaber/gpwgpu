@@ -55,24 +55,25 @@ pub enum EvalError {
 
 impl<'a> Expr<'a>{
     fn into_owned(self) -> Expr<'static>{
+        use Expr::*;
         match self{
-            Expr::Bool(b) => Expr::Bool(b),
-            Expr::Num(n) => Expr::Num(n),
-            Expr::Ident(cow) => Expr::Ident(Cow::Owned(cow.into_owned())),
-            Expr::Neg(e) => Expr::Neg(Box::new(e.into_owned())),
-            Expr::Not(e) => Expr::Not(Box::new(e.into_owned())),
-            Expr::Mul(e1, e2) => Expr::Mul(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::Div(e1, e2) => Expr::Div(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::Add(e1, e2) => Expr::Add(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::Sub(e1, e2) => Expr::Sub(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::LessThan(e1, e2) => Expr::LessThan(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::GreaterThan(e1, e2) => Expr::GreaterThan(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::LessThanOrEqual(e1, e2) => Expr::LessThanOrEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::GreaterThanOrEqual(e1, e2) => Expr::GreaterThanOrEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::Equal(e1, e2) => Expr::Equal(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::NotEqual(e1, e2) => Expr::NotEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::And(e1, e2) => Expr::And(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
-            Expr::Or(e1, e2) => Expr::Or(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Bool(b) => Bool(b),
+            Num(n) => Num(n),
+            Ident(cow) => Ident(Cow::Owned(cow.into_owned())),
+            Neg(e) => Neg(Box::new(e.into_owned())),
+            Not(e) => Not(Box::new(e.into_owned())),
+            Mul(e1, e2) => Mul(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Div(e1, e2) => Div(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Add(e1, e2) => Add(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Sub(e1, e2) => Sub(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            LessThan(e1, e2) => LessThan(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            GreaterThan(e1, e2) => GreaterThan(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            LessThanOrEqual(e1, e2) => LessThanOrEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            GreaterThanOrEqual(e1, e2) => GreaterThanOrEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Equal(e1, e2) => Equal(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            NotEqual(e1, e2) => NotEqual(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            And(e1, e2) => And(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
+            Or(e1, e2) => Or(Box::new(e1.into_owned()), Box::new(e2.into_owned())),
         }
     }
 }
@@ -90,10 +91,11 @@ impl<'a> Expr<'a> {
         self,
         lookup: &impl Fn(Cow<'a, str>) -> Option<Expr>,
     ) -> Result<Expr<'a>, EvalError> {
+        use Expr::*;
         let out = match self {
-            Expr::Bool(b) => Expr::Bool(b),
-            Expr::Num(n) => Expr::Num(n),
-            Expr::Ident(ref name) => {
+            Bool(b) => Bool(b),
+            Num(n) => Num(n),
+            Ident(ref name) => {
                 let expr = lookup(name.clone()).ok_or_else(|| EvalError::IdentNotFound(name.to_string()))?;
                 let expr = if expr != self {
                     expr.simplify_internal(lookup)?
@@ -103,147 +105,147 @@ impl<'a> Expr<'a> {
                 expr
             }
 
-            Expr::Neg(inner) => {
+            Neg(inner) => {
                 let inner = inner.simplify_internal(lookup)?;
                 match inner {
-                    Expr::Num(n) => Expr::Num(-n),
-                    Expr::Bool(_) => return Err(EvalError::BoolInMath),
-                    _ => Expr::Neg(Box::new(inner)),
+                    Num(n) => Num(-n),
+                    Bool(_) => return Err(EvalError::BoolInMath),
+                    _ => Neg(Box::new(inner)),
                 }
             }
-            Expr::Not(inner) => {
+            Not(inner) => {
                 let inner = inner.simplify_internal(lookup)?;
                 match inner {
-                    Expr::Num(_) => return Err(EvalError::NumberInLogic),
-                    Expr::Bool(b) => Expr::Bool(!b),
-                    _ => Expr::Not(Box::new(inner)),
+                    Num(_) => return Err(EvalError::NumberInLogic),
+                    Bool(b) => Bool(!b),
+                    _ => Not(Box::new(inner)),
                 }
             }
 
-            Expr::Mul(left, right) => {
+            Mul(left, right) => {
                 let left = left.simplify_internal(lookup)?;
                 let right = right.simplify_internal(lookup)?;
                 match (left, right) {
-                    (Expr::Num(n), e) | (e, Expr::Num(n)) if n == 1.0 => e,
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Num(n1 * n2),
-                    (Expr::Bool(_), _) | (_, Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (left, right) => Expr::Mul(Box::new(left), Box::new(right)),
+                    (Num(n), e) | (e, Num(n)) if n == 1.0 => e,
+                    (Num(n1), Num(n2)) => Num(n1 * n2),
+                    (Bool(_), _) | (_, Bool(_)) => return Err(EvalError::BoolInMath),
+                    (left, right) => Mul(Box::new(left), Box::new(right)),
                 }
             }
-            Expr::Div(left, right) => {
+            Div(left, right) => {
                 let left = left.simplify_internal(lookup)?;
                 let right = right.simplify_internal(lookup)?;
                 match (left, right) {
-                    (e, Expr::Num(n)) if n == 1.0 => e,
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Num(n1 / n2),
-                    (Expr::Bool(_), _) | (_, Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (left, right) => Expr::Div(Box::new(left), Box::new(right)),
-                }
-            }
-
-            Expr::Add(left, right) => {
-                let left = left.simplify_internal(lookup)?;
-                let right = right.simplify_internal(lookup)?;
-                match (left, right) {
-                    (Expr::Num(n), e) | (e, Expr::Num(n)) if n == 0.0 => e,
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Num(n1 + n2),
-                    (Expr::Bool(_), _) | (_, Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (left, right) => Expr::Add(Box::new(left), Box::new(right)),
-                }
-            }
-            Expr::Sub(left, right) => {
-                let left = left.simplify_internal(lookup)?;
-                let right = right.simplify_internal(lookup)?;
-                match (left, right) {
-                    (Expr::Num(n), e) if n == 0.0 => Expr::Neg(Box::new(e)),
-                    (e, Expr::Num(n)) if n == 0.0 => e,
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Num(n1 - n2),
-                    (Expr::Bool(_), _) | (_, Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (left, right) => Expr::Sub(Box::new(left), Box::new(right)),
+                    (e, Num(n)) if n == 1.0 => e,
+                    (Num(n1), Num(n2)) => Num(n1 / n2),
+                    (Bool(_), _) | (_, Bool(_)) => return Err(EvalError::BoolInMath),
+                    (left, right) => Div(Box::new(left), Box::new(right)),
                 }
             }
 
-            Expr::LessThan(left, right) => {
+            Add(left, right) => {
                 let left = left.simplify_internal(lookup)?;
                 let right = right.simplify_internal(lookup)?;
                 match (left, right) {
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Bool(n1 < n2),
-                    (Expr::Bool(_), _) | (_, Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (left, right) => Expr::LessThan(Box::new(left), Box::new(right)),
+                    (Num(n), e) | (e, Num(n)) if n == 0.0 => e,
+                    (Num(n1), Num(n2)) => Num(n1 + n2),
+                    (Bool(_), _) | (_, Bool(_)) => return Err(EvalError::BoolInMath),
+                    (left, right) => Add(Box::new(left), Box::new(right)),
                 }
             }
-            Expr::GreaterThan(left, right) => {
+            Sub(left, right) => {
                 let left = left.simplify_internal(lookup)?;
                 let right = right.simplify_internal(lookup)?;
                 match (left, right) {
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Bool(n1 > n2),
-                    (Expr::Bool(_), _) | (_, Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (left, right) => Expr::GreaterThan(Box::new(left), Box::new(right)),
-                }
-            }
-            Expr::LessThanOrEqual(left, right) => {
-                let left = left.simplify_internal(lookup)?;
-                let right = right.simplify_internal(lookup)?;
-                match (left, right) {
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Bool(n1 <= n2),
-                    (Expr::Bool(_), _) | (_, Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (left, right) => Expr::LessThanOrEqual(Box::new(left), Box::new(right)),
-                }
-            }
-            Expr::GreaterThanOrEqual(left, right) => {
-                let left = left.simplify_internal(lookup)?;
-                let right = right.simplify_internal(lookup)?;
-                match (left, right) {
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Bool(n1 >= n2),
-                    (Expr::Bool(_), _) | (_, Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (left, right) => Expr::GreaterThanOrEqual(Box::new(left), Box::new(right)),
-                }
-            }
-            Expr::Equal(left, right) => {
-                let left = left.simplify_internal(lookup)?;
-                let right = right.simplify_internal(lookup)?;
-                match (left, right) {
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Bool(n1 == n2),
-                    (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 == b2),
-                    (Expr::Num(_), Expr::Bool(_)) => return Err(EvalError::BoolInMath),
-                    (Expr::Bool(_), Expr::Num(_)) => return Err(EvalError::NumberInLogic),
-                    (left, right) => Expr::Equal(Box::new(left), Box::new(right)),
-                }
-            }
-            Expr::NotEqual(left, right) => {
-                let left = left.simplify_internal(lookup)?;
-                let right = right.simplify_internal(lookup)?;
-                match (left, right) {
-                    (Expr::Num(n1), Expr::Num(n2)) => Expr::Bool(n1 != n2),
-                    (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 != b2),
-                    (left, right) => Expr::NotEqual(Box::new(left), Box::new(right)),
+                    (Num(n), e) if n == 0.0 => Neg(Box::new(e)),
+                    (e, Num(n)) if n == 0.0 => e,
+                    (Num(n1), Num(n2)) => Num(n1 - n2),
+                    (Bool(_), _) | (_, Bool(_)) => return Err(EvalError::BoolInMath),
+                    (left, right) => Sub(Box::new(left), Box::new(right)),
                 }
             }
 
-            Expr::And(left, right) => {
+            LessThan(left, right) => {
                 let left = left.simplify_internal(lookup)?;
-                if matches!(left, Expr::Bool(false)){
-                    Expr::Bool(false)
+                let right = right.simplify_internal(lookup)?;
+                match (left, right) {
+                    (Num(n1), Num(n2)) => Bool(n1 < n2),
+                    (Bool(_), _) | (_, Bool(_)) => return Err(EvalError::BoolInMath),
+                    (left, right) => LessThan(Box::new(left), Box::new(right)),
+                }
+            }
+            GreaterThan(left, right) => {
+                let left = left.simplify_internal(lookup)?;
+                let right = right.simplify_internal(lookup)?;
+                match (left, right) {
+                    (Num(n1), Num(n2)) => Bool(n1 > n2),
+                    (Bool(_), _) | (_, Bool(_)) => return Err(EvalError::BoolInMath),
+                    (left, right) => GreaterThan(Box::new(left), Box::new(right)),
+                }
+            }
+            LessThanOrEqual(left, right) => {
+                let left = left.simplify_internal(lookup)?;
+                let right = right.simplify_internal(lookup)?;
+                match (left, right) {
+                    (Num(n1), Num(n2)) => Bool(n1 <= n2),
+                    (Bool(_), _) | (_, Bool(_)) => return Err(EvalError::BoolInMath),
+                    (left, right) => LessThanOrEqual(Box::new(left), Box::new(right)),
+                }
+            }
+            GreaterThanOrEqual(left, right) => {
+                let left = left.simplify_internal(lookup)?;
+                let right = right.simplify_internal(lookup)?;
+                match (left, right) {
+                    (Num(n1), Num(n2)) => Bool(n1 >= n2),
+                    (Bool(_), _) | (_, Bool(_)) => return Err(EvalError::BoolInMath),
+                    (left, right) => GreaterThanOrEqual(Box::new(left), Box::new(right)),
+                }
+            }
+            Equal(left, right) => {
+                let left = left.simplify_internal(lookup)?;
+                let right = right.simplify_internal(lookup)?;
+                match (left, right) {
+                    (Num(n1), Num(n2)) => Bool(n1 == n2),
+                    (Bool(b1), Bool(b2)) => Bool(b1 == b2),
+                    (Num(_), Bool(_)) => return Err(EvalError::BoolInMath),
+                    (Bool(_), Num(_)) => return Err(EvalError::NumberInLogic),
+                    (left, right) => Equal(Box::new(left), Box::new(right)),
+                }
+            }
+            NotEqual(left, right) => {
+                let left = left.simplify_internal(lookup)?;
+                let right = right.simplify_internal(lookup)?;
+                match (left, right) {
+                    (Num(n1), Num(n2)) => Bool(n1 != n2),
+                    (Bool(b1), Bool(b2)) => Bool(b1 != b2),
+                    (left, right) => NotEqual(Box::new(left), Box::new(right)),
+                }
+            }
+
+            And(left, right) => {
+                let left = left.simplify_internal(lookup)?;
+                if matches!(left, Bool(false)){
+                    Bool(false)
                 } else {
                     let right = right.simplify_internal(lookup)?;
                     match (left, right) {
-                        (Expr::Num(_), _) | (_, Expr::Num(_)) => return Err(EvalError::NumberInLogic),
-                        (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 && b2),
-                        (left, right) => Expr::And(Box::new(left), Box::new(right)),
+                        (Num(_), _) | (_, Num(_)) => return Err(EvalError::NumberInLogic),
+                        (Bool(b1), Bool(b2)) => Bool(b1 && b2),
+                        (left, right) => And(Box::new(left), Box::new(right)),
                     }
                 }
             }
 
-            Expr::Or(left, right) => {
+            Or(left, right) => {
                 let left = left.simplify_internal(lookup)?;
-                if matches!(left, Expr::Bool(true)){
-                    Expr::Bool(true)
+                if matches!(left, Bool(true)){
+                    Bool(true)
                 } else {
                     let right = right.simplify_internal(lookup)?;
                     match (left, right) {
-                        (Expr::Num(_), _) | (_, Expr::Num(_)) => return Err(EvalError::NumberInLogic),
-                        (Expr::Bool(b1), Expr::Bool(b2)) => Expr::Bool(b1 || b2),
-                        (left, right) => Expr::Or(Box::new(left), Box::new(right)),
+                        (Num(_), _) | (_, Num(_)) => return Err(EvalError::NumberInLogic),
+                        (Bool(b1), Bool(b2)) => Bool(b1 || b2),
+                        (left, right) => Or(Box::new(left), Box::new(right)),
                     }
                 }
             }
@@ -376,13 +378,14 @@ fn parse_comparison(input: &str) -> IResult<&str, Expr, NomError> {
         }
     };
 
+    use Expr::*;
     let result = match op {
-        "<=" => Expr::LessThanOrEqual(Box::new(initial), Box::new(expr)),
-        ">=" => Expr::GreaterThanOrEqual(Box::new(initial), Box::new(expr)),
-        "<" => Expr::LessThan(Box::new(initial), Box::new(expr)),
-        ">" => Expr::GreaterThan(Box::new(initial), Box::new(expr)),
-        "==" => Expr::Equal(Box::new(initial), Box::new(expr)),
-        "!=" => Expr::NotEqual(Box::new(initial), Box::new(expr)),
+        "<=" => LessThanOrEqual(Box::new(initial), Box::new(expr)),
+        ">=" => GreaterThanOrEqual(Box::new(initial), Box::new(expr)),
+        "<" => LessThan(Box::new(initial), Box::new(expr)),
+        ">" => GreaterThan(Box::new(initial), Box::new(expr)),
+        "==" => Equal(Box::new(initial), Box::new(expr)),
+        "!=" => NotEqual(Box::new(initial), Box::new(expr)),
         _ => unreachable!(),
     };
 
@@ -615,14 +618,15 @@ pub fn vec_to_owned<'a>(tokens: Vec<Token<'a>>) -> Vec<Token<'static>>{
 
 impl<'a> Token<'a>{
     fn into_owned(self) -> Token<'static>{
+        use Token::*;
         match self{
-            Token::Code(cow) => Token::Code(Cow::Owned(cow.to_string())),
-            Token::Ident(cow) => Token::Ident(Cow::Owned(cow.to_string())),
-            Token::Expr(expr) => Token::Expr(expr.into_owned()),
-            Token::If(if_tok) => Token::If(if_tok.into_owned()),
-            Token::For(for_tok) => Token::For(for_tok.into_owned()),
-            Token::NestedFor(nested) => Token::NestedFor(nested.into_owned()),
-            Token::Concat(concat) => Token::Concat(concat.into_owned()),
+            Code(cow) => Code(Cow::Owned(cow.to_string())),
+            Ident(cow) => Ident(Cow::Owned(cow.to_string())),
+            Expr(expr) => Expr(expr.into_owned()),
+            If(if_tok) => If(if_tok.into_owned()),
+            For(for_tok) => For(for_tok.into_owned()),
+            NestedFor(nested) => NestedFor(nested.into_owned()),
+            Concat(concat) => Concat(concat.into_owned()),
         }
     }
 }
@@ -905,12 +909,13 @@ pub enum Definition<'def> {
 
 impl<'def> Definition<'def>{
     fn new_owned(&self) -> Definition<'static>{
+        use Definition::*;
         match self{
-            Definition::Bool(v) => Definition::Bool(*v),
-            Definition::Int(v) => Definition::Int(*v),
-            Definition::UInt(v) => Definition::UInt(*v),
-            Definition::Any(cow) => Definition::Any(Cow::Owned(cow.to_string())),
-            Definition::Float(v) => Definition::Float(*v),
+            Bool(v) => Bool(*v),
+            Int(v) => Int(*v),
+            UInt(v) => UInt(*v),
+            Any(cow) => Any(Cow::Owned(cow.to_string())),
+            Float(v) => Float(*v),
         }
     }
 }
@@ -983,13 +988,14 @@ macro_rules! make_expr_lookup {
     ($func:ident) => {
     |s: Cow<'a, str>| -> Option<Expr<'a>> {
         let def = $func(s)?;
+        use Definition::*;
         match def{
-            Definition::Bool(val) => Some(Expr::Bool(val)),
-            Definition::Int(val) => Some(Expr::Num(val as f64)),
-            Definition::UInt(val) => Some(Expr::Num(val as f64)),
-            Definition::Float(val) => Some(Expr::Num(val as f64)),
+            Bool(val) => Some(Expr::Bool(val)),
+            Int(val) => Some(Expr::Num(val as f64)),
+            UInt(val) => Some(Expr::Num(val as f64)),
+            Float(val) => Some(Expr::Num(val as f64)),
             // FIXME
-            Definition::Any(_val) => panic!("Maybe need to deal with this at some point"),
+            Any(_val) => panic!("Maybe need to deal with this at some point"),
         }
     }
     };

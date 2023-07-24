@@ -214,25 +214,28 @@ impl<'a> WorkgroupSize<'a> {
     }
 }
 
-impl<'a> From<(u32, u32, u32)> for WorkgroupSize<'a> {
+impl From<(u32, u32, u32)> for WorkgroupSize<'static> {
     fn from(value: (u32, u32, u32)) -> Self {
         Self::new(value.0, value.1, value.2)
     }
 }
 
-impl<'a> From<[u32; 3]> for WorkgroupSize<'a> {
+impl From<[u32; 3]> for WorkgroupSize<'static> {
     fn from(value: [u32; 3]) -> Self {
         Self::new(value[0], value[1], value[2])
     }
 }
 
+#[derive(Debug)]
+pub struct IndirectDispatcher{
+    dispatcher: wgpu::Buffer,
+    resetter: wgpu::Buffer,
+}
+
 #[derive(Debug, Clone)]
 pub enum Dispatcher {
     Direct([u32; 3]),
-    Indirect {
-        dispatcher: Rc<wgpu::Buffer>,
-        resetter: Rc<wgpu::Buffer>,
-    },
+    Indirect(Rc<IndirectDispatcher>),
 }
 
 impl Dispatcher {
@@ -246,49 +249,44 @@ impl Dispatcher {
     }
 
     pub fn new_indirect(device: &wgpu::Device, default: wgpu::util::DispatchIndirect) -> Self {
-        let dispatcher = Rc::new(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let dispatcher = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: default.as_bytes(),
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::INDIRECT
                     | wgpu::BufferUsages::COPY_DST
                     | wgpu::BufferUsages::COPY_SRC,
-            }),
-        );
+            });
 
-        let resetter = Rc::new(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let resetter = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: default.as_bytes(),
                 usage: wgpu::BufferUsages::COPY_SRC,
-            }),
-        );
+            });
 
-        Self::Indirect {
-            dispatcher,
-            resetter,
-        }
+        Self::Indirect(Rc::new(IndirectDispatcher { dispatcher, resetter }))
     }
 
     pub fn reset_indirect(&self, encoder: &mut wgpu::CommandEncoder) {
         match self {
-            Self::Indirect {
-                dispatcher,
-                resetter,
-            } => encoder.copy_buffer_to_buffer(resetter, 0, dispatcher, 0, resetter.size()),
+            
+            Dispatcher::Indirect(indirect) => {
+                let IndirectDispatcher { ref dispatcher, ref resetter } = **indirect;
+                encoder.copy_buffer_to_buffer(resetter, 0, dispatcher, 0, resetter.size())
+            },
             Self::Direct(_) => {}
         }
     }
 
     pub fn get_buffer(&self) -> &wgpu::Buffer {
         match self {
-            Self::Indirect { dispatcher, .. } => dispatcher,
+            Self::Indirect( indirect ) => &indirect.dispatcher,
             Self::Direct(_) => panic!("Tried to get buffer of a direct dispatcher."),
         }
     }
 }
 
+#[derive(Debug)]
 pub struct FullComputePass {
     pub bindgroup: wgpu::BindGroup,
     pub pipeline: Rc<NonBoundPipeline>,
@@ -328,8 +326,8 @@ impl FullComputePass {
             Dispatcher::Direct(ref wg_n) => {
                 cpass.dispatch_workgroups(wg_n[0], wg_n[1], wg_n[2]);
             }
-            Dispatcher::Indirect { ref dispatcher, .. } => {
-                cpass.dispatch_workgroups_indirect(dispatcher, 0);
+            Dispatcher::Indirect(indirect) => {
+                cpass.dispatch_workgroups_indirect(&indirect.dispatcher, 0);
             }
         }
     }

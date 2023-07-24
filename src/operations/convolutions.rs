@@ -1,5 +1,6 @@
 use std::{rc::Rc, ops::Deref};
 
+use bytemuck::Pod;
 #[allow(unused)]
 use my_core::shaderpreprocessor::ShaderProcessor;
 
@@ -7,29 +8,37 @@ use my_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline}, parser::{Defi
 
 use super::PREPROCESSOR;
 
-pub fn rotate_dims_right<const N: usize>(dims: &mut [i32; N]){
-    let old_dims = dims.clone();
-    
-    dims[0] = old_dims[N-1];
-    for i in 1..N{
-        dims[i] = old_dims[i - 1];
+pub fn rotate_dims_right(dims: &mut [i32]){
+    let tmp = dims[dims.len()-1];
+    for i in (1..dims.len()).rev(){
+        dims[i] = dims[i - 1];
     }
+    dims[0] = tmp;
 }
 
-pub fn rotate_dims_left<const N: usize>(dims: &mut [i32; N]){
-    let old_dims = dims.clone();
-    for i in 0..N-1{
-        dims[i] = old_dims[i + 1];
+pub fn rotate_dims_left(dims: &mut [i32]){
+    let tmp = dims[0];
+    for i in 0..dims.len()-1{
+        dims[i] = dims[i + 1];
     }
-    dims[N-1] = old_dims[0];
+    dims[dims.len() - 1] = tmp;
+}
+
+pub fn array_to_u8<T: Pod, const N: usize>(array: &[T; N]) -> [&[u8]; N]{
+	let mut push: [&[u8]; N] = [&[]; N];
+	for (t, push) in array.iter().zip(push.iter_mut()){
+		*push = bytemuck::bytes_of(t)
+	}
+    push
 }
 
 // FIXME I have no idea what this thing does in 1D.
+#[derive(Debug)]
 pub struct SeparableConvolution<const N: usize>{
-    input_pass: FullComputePass,
-    temp_pass: [FullComputePass; 2],
-    last_pass: FullComputePass,
-    dims: [i32; N],
+    pub input_pass: FullComputePass,
+    pub temp_pass: [FullComputePass; 2],
+    pub last_pass: FullComputePass,
+    pub dims: [i32; N],
 }
 
 impl<const N: usize> SeparableConvolution<N>{
@@ -45,7 +54,7 @@ impl<const N: usize> SeparableConvolution<N>{
         first_additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
         additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
         last_additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
-    ) -> Result<Self, ExpansionError> {
+    ) -> Self {
         
         let input_pass = {
             let first_pass_output = if N % 2 == 0{
@@ -94,12 +103,12 @@ impl<const N: usize> SeparableConvolution<N>{
             [output_pass, temp_pass]
         };
 
-        Ok(Self{
+        Self{
             input_pass,
             temp_pass: temp_passes,
             dims,
             last_pass,
-        })
+        }
     }
     
     pub fn from_pipeline<'buf, 'proc>(
@@ -110,7 +119,7 @@ impl<const N: usize> SeparableConvolution<N>{
         temp: &wgpu::Buffer,
         output: &wgpu::Buffer,
         additional_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer> + Copy,
-    ) -> Result<Self, ExpansionError> {
+    ) -> Self {
         Self::from_three_pipelines(
             device,
             Rc::clone(&pipeline),
@@ -203,7 +212,7 @@ impl<const N: usize> GaussianSmoothing<N> {
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
         output: &wgpu::Buffer,
-    ) -> Result<Self, ExpansionError> {
+    ) -> Self {
         let pass = SeparableConvolution::from_pipeline(
             device,
             pipeline,
@@ -212,9 +221,9 @@ impl<const N: usize> GaussianSmoothing<N> {
             temp,
             output,
             None,
-        )?;
+        );
 
-        Ok(Self(pass))
+        Self(pass)
     }
 
     
@@ -237,7 +246,7 @@ impl<const N: usize> GaussianSmoothing<N> {
             temp,
             output,
             None,
-        )?;
+        );
         Ok(Self(pass))
     }
 
@@ -327,7 +336,7 @@ var<storage, read_write> final_output: array<f32>;";
         temp: &wgpu::Buffer,
         temp2: &wgpu::Buffer,
         output: &'a wgpu::Buffer,
-    ) -> Result<Self, ExpansionError> {
+    ) -> Self {
         let pass = SeparableConvolution::from_pipeline(
             device,
             pipeline,
@@ -336,12 +345,12 @@ var<storage, read_write> final_output: array<f32>;";
             temp,
             temp2,
             Some(output)
-        )?;
+        );
 
-        Ok(Self{
+        Self{
             pass,
             output,
-        })
+        }
     }
 
     pub fn new(
@@ -353,7 +362,7 @@ var<storage, read_write> final_output: array<f32>;";
         output: &'a wgpu::Buffer,
     ) -> Result<Self, ExpansionError> {
         let pipeline = Self::pipeline(device, dims)?;
-        Self::from_pipeline(
+        Ok(Self::from_pipeline(
             device,
             dims,
             pipeline,
@@ -361,7 +370,7 @@ var<storage, read_write> final_output: array<f32>;";
             temp,
             temp2,
             output,
-        )
+        ))
     }
 
     pub fn execute(
@@ -386,3 +395,12 @@ var<storage, read_write> final_output: array<f32>;";
 }
 
 
+
+#[test]
+fn rotate_dims(){
+    let mut inp = [1, 2, 3, 4, 5];
+    rotate_dims_right(&mut inp);
+    assert_eq!(inp, [5, 1, 2, 3, 4]);
+    rotate_dims_left(&mut inp);
+    assert_eq!(inp, [1, 2, 3, 4, 5]);
+}
