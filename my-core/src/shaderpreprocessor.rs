@@ -12,13 +12,13 @@ pub struct NonBoundPipeline {
     pub label: Option<String>,
     pub compute_pipeline: wgpu::ComputePipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
-    pub dispatcher: Option<Dispatcher>,
+    pub dispatcher: Option<Dispatcher<'static>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ShaderSpecs<'wg, 'def> {
     pub workgroup_size: WorkgroupSize<'wg>,
-    pub dispatcher: Option<Dispatcher>,
+    pub dispatcher: Option<Dispatcher<'static>>,
     pub push_constants: Option<u32>,
     pub shader_defs: HashMap<Cow<'def, str>, Definition<'def>>,
     pub entry_point: Option<String>,
@@ -55,7 +55,7 @@ impl<'wg: 'def, 'def> ShaderSpecs<'wg, 'def> {
         self
     }
 
-    pub fn dispatcher(mut self, val: Dispatcher) -> Self {
+    pub fn dispatcher(mut self, val: Dispatcher<'static>) -> Self {
         self.dispatcher = Some(val);
         self
     }

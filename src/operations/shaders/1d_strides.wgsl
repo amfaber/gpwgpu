@@ -20,11 +20,13 @@ fn main(
 	@builtin(global_invocation_id) global_id: vec3<u32>,
 	@builtin(local_invocation_index) local_index: u32,
 ) {
+
 	var coords: array<i32, #N>;
 
 	var strides: array<i32, #N>;
 
 	var next_stride = 1;
+
 	
 	#for I in 0..N{
 		strides[#N - 1 - #I] = next_stride;

@@ -21,10 +21,11 @@ pub type NomError<'a> = nom_supreme::error::ErrorTree<&'a str>;
 
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize, Clone)]
-pub enum Expr<'a> {
+pub enum Expr<'a>{
     Bool(bool),
     Num(f64),
     Ident(Cow<'a, str>),
+    
     Neg(Box<Expr<'a>>),
     Not(Box<Expr<'a>>),
 

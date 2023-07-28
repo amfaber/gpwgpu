@@ -9,7 +9,7 @@ use gpwgpu::{
     },
     parser::{parse_tokens, Token, process, Definition, trim_trailing_spaces, NestedFor},
     shaderpreprocessor::{ShaderProcessor, ShaderSpecs},
-    utils::{default_device, inspect_buffers, read_buffer, FullComputePass},
+    utils::{default_device, inspect_buffers, read_buffer, FullComputePass}, automatic_buffers::MemoryReq,
 };
 use macros::*;
 use ndarray::{Array, Axis, Array3};

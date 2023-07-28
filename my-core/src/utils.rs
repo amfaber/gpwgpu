@@ -2,10 +2,11 @@ use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
 use std::{collections::HashMap, rc::Rc, borrow::Cow, ops::Bound, mem::size_of};
-use wgpu::{self, util::DeviceExt};
+use wgpu::{self, util::DeviceExt, MAP_ALIGNMENT};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
 
+/// Convenience function to read a Pod type from a mappable buffer.
 pub fn read_buffer<T: bytemuck::Pod>(
     device: &wgpu::Device,
     mappable_buffer: &wgpu::Buffer,
@@ -30,6 +31,41 @@ pub fn read_buffer<T: bytemuck::Pod>(
     drop(view);
     mappable_buffer.unmap();
     out
+}
+
+/// Same as [read_buffer], but does a copy from the data buffer to the mappable buffer before
+/// mapping and reading from the mappable buffer.
+pub fn read_from_buffer<T: bytemuck::Pod>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    data_buffer: &wgpu::Buffer,
+    mappable_buffer: &wgpu::Buffer,
+) -> Vec<T>{
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(data_buffer, 0, mappable_buffer, 0, data_buffer.size());
+    queue.submit(Some(encoder.finish()));
+    read_buffer::<T>(device, mappable_buffer, 0, None)
+}
+
+
+/// A convenience function to read a number of items a buffer with that number being
+/// by the contents of another buffer.
+/// 
+/// Has not been performance tested, but is useful for debugging.
+pub fn read_n_from_buffer<T: bytemuck::Pod>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    counter_buffer: &wgpu::Buffer,
+    data_buffer: &wgpu::Buffer,
+    mappable_buffer: &wgpu::Buffer,
+) -> Vec<T>{
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(counter_buffer, 0, mappable_buffer, 0, 4);
+    encoder.copy_buffer_to_buffer(data_buffer, 0, mappable_buffer, MAP_ALIGNMENT, data_buffer.size());
+    queue.submit(Some(encoder.finish()));
+    
+    let n = read_buffer::<u32>(device, mappable_buffer, 0, Some(1))[0];
+    read_buffer::<T>(device, mappable_buffer, MAP_ALIGNMENT, Some(n as u64))
 }
 
 pub trait BindingGroup {
@@ -180,6 +216,7 @@ pub async fn default_device() -> Result<(wgpu::Device, wgpu::Queue), wgpu::Reque
     device_desc.limits.max_push_constant_size = 64;
     device_desc.features =
         wgpu::Features::MAPPABLE_PRIMARY_BUFFERS | wgpu::Features::PUSH_CONSTANTS;
+    device_desc.limits.max_storage_buffers_per_shader_stage = 12;
     adapter
         .await
         .ok_or(wgpu::RequestDeviceError)?
@@ -233,12 +270,16 @@ pub struct IndirectDispatcher{
 }
 
 #[derive(Debug, Clone)]
-pub enum Dispatcher {
+pub enum Dispatcher<'a> {
     Direct([u32; 3]),
     Indirect(Rc<IndirectDispatcher>),
+    IndirectBorrowed{
+        dispatcher: &'a wgpu::Buffer,
+        resetter: &'a wgpu::Buffer,
+    }
 }
 
-impl Dispatcher {
+impl<'a> Dispatcher<'a> {
     pub fn new_direct(dims: &[u32; 3], wgsize: &WorkgroupSize) -> Self {
         let mut n_workgroups = [0, 0, 0];
         let wgsize = [wgsize.x, wgsize.y, wgsize.z];
@@ -268,19 +309,28 @@ impl Dispatcher {
     }
 
     pub fn reset_indirect(&self, encoder: &mut wgpu::CommandEncoder) {
-        match self {
-            
-            Dispatcher::Indirect(indirect) => {
-                let IndirectDispatcher { ref dispatcher, ref resetter } = **indirect;
-                encoder.copy_buffer_to_buffer(resetter, 0, dispatcher, 0, resetter.size())
+        let (dispatcher, resetter) = match self {
+            Self::Indirect(indirect) => {
+                (&indirect.dispatcher, &indirect.resetter)
             },
-            Self::Direct(_) => {}
-        }
+            Self::IndirectBorrowed { dispatcher, resetter } => {
+                (dispatcher as &wgpu::Buffer, resetter as &wgpu::Buffer)
+            },
+            Self::Direct(_) => return
+        };
+        encoder.copy_buffer_to_buffer(
+            resetter,
+            0,
+            dispatcher,
+            0,
+            (size_of::<u32>() * 3) as _
+        )
     }
 
     pub fn get_buffer(&self) -> &wgpu::Buffer {
         match self {
             Self::Indirect( indirect ) => &indirect.dispatcher,
+            Self::IndirectBorrowed { dispatcher, .. } => dispatcher,
             Self::Direct(_) => panic!("Tried to get buffer of a direct dispatcher."),
         }
     }
@@ -328,6 +378,9 @@ impl FullComputePass {
             }
             Dispatcher::Indirect(indirect) => {
                 cpass.dispatch_workgroups_indirect(&indirect.dispatcher, 0);
+            }
+            Dispatcher::IndirectBorrowed { dispatcher, .. } => {
+                cpass.dispatch_workgroups_indirect(dispatcher, 0);
             }
         }
     }

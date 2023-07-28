@@ -8,4 +8,3 @@ pub use bincode;
 
 pub use parser::ExpansionError;
 
-pub mod automatic_buffers;

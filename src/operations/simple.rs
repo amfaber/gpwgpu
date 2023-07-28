@@ -19,6 +19,7 @@ impl<'a> OperationType<'a>{
         let other = match unary_binary{
             UnaryBinary::Unary(constant) => format!("{:.1}", constant),
             UnaryBinary::Binary(_) => "input2[idx]".to_string(),
+            UnaryBinary::BinaryConstant(_) => "input2".to_string(),
         };
         use OperationType::*;
         match self{
@@ -33,27 +34,42 @@ impl<'a> OperationType<'a>{
     }
 }
 
-enum UnaryBinary<'a>{
+pub enum UnaryBinary<'a>{
     Unary(f32),
-    Binary(&'a wgpu::Buffer)
+    Binary(&'a wgpu::Buffer),
+    BinaryConstant(&'a wgpu::Buffer),
 }
 
-fn new_simple(
+pub fn new_simple(
     device: &wgpu::Device,
-    length: usize,
+    length: wgpu::BufferAddress,
     ty: OperationType,
     input: &wgpu::Buffer,
     unary_binary: UnaryBinary,
     output: Option<&wgpu::Buffer>,
 ) -> Result<FullComputePass, ExpansionError>{
+
+    let binary = match unary_binary{
+        UnaryBinary::Binary(_) | UnaryBinary::BinaryConstant(_) => true,
+        UnaryBinary::Unary(_) => false,
+    };
+
+    let inplace = output.is_none();
+
+    let binary_type = match unary_binary{
+        UnaryBinary::Unary(_) => "",
+        UnaryBinary::Binary(_) => "array<f32>",
+        UnaryBinary::BinaryConstant(_) => "f32",
+    };
     
     let specs = ShaderSpecs::new((256, 1, 1))
         .direct_dispatcher(&[length as u32, 1, 1])
         .extend_defs([
             ("LENGTH", (length as u32).into()),
-            ("BINARY", true.into()),
-            ("INPLACE", false.into()),
+            ("BINARY", binary.into()),
+            ("INPLACE", inplace.into()),
             ("OPERATION", ty.to_def(&unary_binary)),
+            ("BINARY_TYPE", binary_type.into()),
         ]);
 
     let shader = PREPROCESSOR.process_by_name("simple", specs)?;
@@ -82,7 +98,7 @@ pub struct BinaryOutplace(FullComputePass);
 impl BinaryOutplace{
     pub fn new(
         device: &wgpu::Device,
-        length: usize,
+        length: wgpu::BufferAddress,
         ty: OperationType,
         input: &wgpu::Buffer,
         input2: &wgpu::Buffer,
@@ -107,7 +123,7 @@ pub struct BinaryInplace(FullComputePass);
 impl BinaryInplace{
     pub fn new(
         device: &wgpu::Device,
-        length: usize,
+        length: wgpu::BufferAddress,
         ty: OperationType,
         input: &wgpu::Buffer,
         input2: &wgpu::Buffer,
@@ -131,7 +147,7 @@ pub struct UnaryInplace(FullComputePass);
 impl UnaryInplace{
     pub fn new(
         device: &wgpu::Device,
-        length: usize,
+        length: wgpu::BufferAddress,
         ty: OperationType,
         input: &wgpu::Buffer,
         constant: f32,
@@ -155,7 +171,7 @@ pub struct UnaryOutplace(FullComputePass);
 impl UnaryOutplace{
     pub fn new(
         device: &wgpu::Device,
-        length: usize,
+        length: wgpu::BufferAddress,
         ty: OperationType,
         input: &wgpu::Buffer,
         constant: f32,

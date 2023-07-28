@@ -46,7 +46,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
     
     if (idx < pc.length)
     #if NANPROTECT{
-        & (bitcast<u32>(datum) != 4294967295u
+        & (bitcast<u32>(datum) != 4294967295u)
     }
     {
         #OPERATION

@@ -168,6 +168,7 @@ impl<const N: usize> SeparableConvolution<N>{
 }
 
 
+#[derive(Debug)]
 pub struct GaussianSmoothing<const N: usize>(SeparableConvolution<N>);
 
 impl<const N: usize> GaussianSmoothing<N> {

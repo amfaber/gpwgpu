@@ -50,7 +50,9 @@ impl<'wg> Reduce<'wg> {
         size: usize,
         ty: ReductionType,
         nanprotection: bool,
+        // Each thread adds this many numbers at a time
         unroll: u32,
+        // This is to allow passing the workgroup size, push constant size, entry point and so on.
         specs: ShaderSpecs<'wg, '_>,
 
         extra_push: String,
@@ -58,6 +60,7 @@ impl<'wg> Reduce<'wg> {
         extra_buffers: String,
         last_buffers: impl IntoIterator<Item = &'buf wgpu::Buffer>,
 
+        // Below this number of remaining elements, we switch to the last reduction
         last_size: u32,
 
         inplace_label: &str,
@@ -75,9 +78,10 @@ impl<'wg> Reduce<'wg> {
                         ty.to_shader_val(),
                     ])
                     .labels("outplace");
-                let outplace = PREPROCESSOR
-                    .process_by_name("reduce", outplace_specs)?
-                    .build(device);
+                
+                let shader = PREPROCESSOR
+                    .process_by_name("reduce", outplace_specs)?;
+                let outplace = shader.build(device);
 
                 let bindgroup = [(0, input), (1, output)];
 

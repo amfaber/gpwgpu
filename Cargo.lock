@@ -485,6 +485,7 @@ dependencies = [
  "quote",
  "rust-format",
  "syn",
+ "wgpu",
 ]
 
 [[package]]

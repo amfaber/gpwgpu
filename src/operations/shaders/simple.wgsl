@@ -3,7 +3,7 @@ var<storage, read#if INPLACE{_write}> input: array<f32>;
 
 #if BINARY{
 	@group(0) @binding(1)
-	var<storage, read> input2: array<f32>;
+	var<storage, read> input2: #BINARY_TYPE;
 }
 
 #if !INPLACE{
