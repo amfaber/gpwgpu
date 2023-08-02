@@ -47,10 +47,13 @@ pub enum Expr<'a>{
     Or(Box<Expr<'a>>, Box<Expr<'a>>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EvalError {
+    #[error("A number was encountered in an expression that expected a boolean (&& or ||)")]
     NumberInLogic,
+    #[error("A boolean was encountered in an expression that expected a number")]
     BoolInMath,
+    #[error("The identifier was not found {}", 0)]
     IdentNotFound(String),
 }
 
@@ -883,21 +886,28 @@ pub fn parse_tokens(mut input: &str) -> IResult<&str, Vec<Token>, NomError> {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ExpansionError{
+    #[error("The identifier was not found")]
     IdentNotFound(String),
-    SimplifyError(EvalError),
+    #[error("An error was encountered during expression evaluation")]
+    SimplifyError(#[from] EvalError),
+    #[error("A condition couldn't be simplified to a boolean")]
     NonBoolCondition(Expr<'static>),
+    #[error("The loop range couldn't be simplified to a number")]
     NonNumRange(Range<'static>),
+    // FIXME I don't remember what this error does
+    #[error("TODO: write a proper error message")]
     NonBoolOrNumExpr(Expr<'static>),
+    #[error("The definition was expected to be a number, but got")]
     ExpectedNumber(Definition<'static>)
 }
 
-impl<'a> From<EvalError> for ExpansionError{
-    fn from(value: EvalError) -> Self {
-        ExpansionError::SimplifyError(value)
-    }
-}
+// impl<'a> From<EvalError> for ExpansionError{
+//     fn from(value: EvalError) -> Self {
+//         ExpansionError::SimplifyError(value)
+//     }
+// }
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Definition<'def> {
