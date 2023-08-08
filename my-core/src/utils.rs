@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
-use std::{collections::HashMap, rc::Rc, borrow::Cow, ops::Bound, mem::size_of};
+use std::{borrow::Cow, collections::HashMap, mem::size_of, ops::Bound, rc::Rc};
 use wgpu::{self, util::DeviceExt, MAP_ALIGNMENT};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
@@ -14,7 +14,7 @@ pub fn read_buffer<T: bytemuck::Pod>(
     n_items: Option<u64>,
 ) -> Vec<T> {
     let byte_size = size_of::<T>() as wgpu::BufferAddress;
-    let end = match n_items{
+    let end = match n_items {
         Some(n) => Bound::Excluded(offset + n * byte_size),
         None => Bound::Unbounded,
     };
@@ -40,17 +40,16 @@ pub fn read_from_buffer<T: bytemuck::Pod>(
     queue: &wgpu::Queue,
     data_buffer: &wgpu::Buffer,
     mappable_buffer: &wgpu::Buffer,
-) -> Vec<T>{
+) -> Vec<T> {
     let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_buffer_to_buffer(data_buffer, 0, mappable_buffer, 0, data_buffer.size());
     queue.submit(Some(encoder.finish()));
     read_buffer::<T>(device, mappable_buffer, 0, None)
 }
 
-
 /// A convenience function to read a number of items a buffer with that number being
 /// by the contents of another buffer.
-/// 
+///
 /// Has not been performance tested, but is useful for debugging.
 pub fn read_n_from_buffer<T: bytemuck::Pod>(
     device: &wgpu::Device,
@@ -58,12 +57,18 @@ pub fn read_n_from_buffer<T: bytemuck::Pod>(
     counter_buffer: &wgpu::Buffer,
     data_buffer: &wgpu::Buffer,
     mappable_buffer: &wgpu::Buffer,
-) -> Vec<T>{
+) -> Vec<T> {
     let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_buffer_to_buffer(counter_buffer, 0, mappable_buffer, 0, 4);
-    encoder.copy_buffer_to_buffer(data_buffer, 0, mappable_buffer, MAP_ALIGNMENT, data_buffer.size());
+    encoder.copy_buffer_to_buffer(
+        data_buffer,
+        0,
+        mappable_buffer,
+        MAP_ALIGNMENT,
+        data_buffer.size(),
+    );
     queue.submit(Some(encoder.finish()));
-    
+
     let n = read_buffer::<u32>(device, mappable_buffer, 0, Some(1))[0];
     read_buffer::<T>(device, mappable_buffer, MAP_ALIGNMENT, Some(n as u64))
 }
@@ -264,7 +269,7 @@ impl From<[u32; 3]> for WorkgroupSize<'static> {
 }
 
 #[derive(Debug)]
-pub struct IndirectDispatcher{
+pub struct IndirectDispatcher {
     dispatcher: wgpu::Buffer,
     resetter: wgpu::Buffer,
 }
@@ -273,10 +278,10 @@ pub struct IndirectDispatcher{
 pub enum Dispatcher<'a> {
     Direct([u32; 3]),
     Indirect(Rc<IndirectDispatcher>),
-    IndirectBorrowed{
+    IndirectBorrowed {
         dispatcher: &'a wgpu::Buffer,
         resetter: &'a wgpu::Buffer,
-    }
+    },
 }
 
 impl<'a> Dispatcher<'a> {
@@ -291,45 +296,41 @@ impl<'a> Dispatcher<'a> {
 
     pub fn new_indirect(device: &wgpu::Device, default: wgpu::util::DispatchIndirect) -> Self {
         let dispatcher = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: default.as_bytes(),
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::INDIRECT
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-            });
+            label: None,
+            contents: default.as_bytes(),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+        });
 
         let resetter = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: default.as_bytes(),
-                usage: wgpu::BufferUsages::COPY_SRC,
-            });
+            label: None,
+            contents: default.as_bytes(),
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
 
-        Self::Indirect(Rc::new(IndirectDispatcher { dispatcher, resetter }))
+        Self::Indirect(Rc::new(IndirectDispatcher {
+            dispatcher,
+            resetter,
+        }))
     }
 
     pub fn reset_indirect(&self, encoder: &mut wgpu::CommandEncoder) {
         let (dispatcher, resetter) = match self {
-            Self::Indirect(indirect) => {
-                (&indirect.dispatcher, &indirect.resetter)
-            },
-            Self::IndirectBorrowed { dispatcher, resetter } => {
-                (dispatcher as &wgpu::Buffer, resetter as &wgpu::Buffer)
-            },
-            Self::Direct(_) => return
+            Self::Indirect(indirect) => (&indirect.dispatcher, &indirect.resetter),
+            Self::IndirectBorrowed {
+                dispatcher,
+                resetter,
+            } => (dispatcher as &wgpu::Buffer, resetter as &wgpu::Buffer),
+            Self::Direct(_) => return,
         };
-        encoder.copy_buffer_to_buffer(
-            resetter,
-            0,
-            dispatcher,
-            0,
-            (size_of::<u32>() * 3) as _
-        )
+        encoder.copy_buffer_to_buffer(resetter, 0, dispatcher, 0, (size_of::<u32>() * 3) as _)
     }
 
     pub fn get_buffer(&self) -> &wgpu::Buffer {
         match self {
-            Self::Indirect( indirect ) => &indirect.dispatcher,
+            Self::Indirect(indirect) => &indirect.dispatcher,
             Self::IndirectBorrowed { dispatcher, .. } => dispatcher,
             Self::Direct(_) => panic!("Tried to get buffer of a direct dispatcher."),
         }
@@ -403,30 +404,79 @@ impl FullComputePass {
     }
 }
 
-pub fn inspect_buffers<P: AsRef<std::path::Path>>(
-    buffers_to_inspect: &[&wgpu::Buffer],
-    mappable_buffer: &wgpu::Buffer,
-    queue: &wgpu::Queue,
-    encoder: &mut wgpu::CommandEncoder,
+pub fn inspect_buffers<'a>(
     device: &wgpu::Device,
-    file_path: P,
+    queue: &wgpu::Queue,
+    buffers_to_inspect: impl IntoIterator<Item = &'a wgpu::Buffer>,
+    // mappable_buffer: &wgpu::Buffer,
+    encoder: &mut wgpu::CommandEncoder,
+    file_path: impl AsRef<std::path::Path>,
+) -> ! {
+    let buffers_to_inspect =
+        buffers_to_inspect
+            .into_iter()
+            .enumerate()
+            .map(|(i, buf)| InspectBuffer {
+                buffer: buf,
+                size: buf.size(),
+                name: format!("dumpy{i}"),
+            });
+    inspect_buffers_size_name(
+        device,
+        queue,
+        buffers_to_inspect,
+        // mappable_buffer,
+        encoder,
+        file_path,
+    )
+}
+
+#[derive(Clone)]
+pub struct InspectBuffer<'a> {
+    pub buffer: &'a wgpu::Buffer,
+    pub size: wgpu::BufferAddress,
+    pub name: String,
+}
+
+pub fn inspect_buffers_size_name<'a>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    buffers_to_inspect: impl IntoIterator<Item = InspectBuffer<'a>>,
+    // mappable_buffer: &wgpu::Buffer,
+    encoder: &mut wgpu::CommandEncoder,
+    file_path: impl AsRef<std::path::Path>,
 ) -> ! {
     let path = file_path.as_ref().to_owned();
     let encoder = std::mem::replace(encoder, device.create_command_encoder(&Default::default()));
     queue.submit(Some(encoder.finish()));
 
-    for (i, &buffer) in buffers_to_inspect.iter().enumerate() {
+    let inspects = Vec::from_iter(buffers_to_inspect);
+
+    let max_size = inspects
+        .iter()
+        .max_by_key(|&inspect| inspect.size)
+        .unwrap_or_else(|| panic!("No buffers provided"))
+        .size;
+
+    let mappable_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("mappable buffer for inspect"),
+        size: max_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    for InspectBuffer { buffer, size, name } in inspects {
         let mut encoder = device.create_command_encoder(&Default::default());
-        encoder.clear_buffer(mappable_buffer, 0, None);
-        encoder.copy_buffer_to_buffer(buffer, 0, mappable_buffer, 0, buffer.size());
+        encoder.clear_buffer(&mappable_buffer, 0, None);
+        encoder.copy_buffer_to_buffer(buffer, 0, &mappable_buffer, 0, size);
         queue.submit(Some(encoder.finish()));
         let slice = mappable_buffer.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         device.poll(wgpu::Maintain::Wait);
         let data = slice.get_mapped_range()[..].to_vec();
         let mut path = path.clone();
-        path.push(format!("dump{}.bin", i));
-        std::fs::write(&path, &data[..buffer.size() as usize]).unwrap();
+        path.push(format!("{name}.bin"));
+        std::fs::write(&path, &data[..size as usize]).unwrap();
         mappable_buffer.unmap();
     }
 
