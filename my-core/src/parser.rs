@@ -53,7 +53,7 @@ pub enum EvalError {
     NumberInLogic,
     #[error("A boolean was encountered in an expression where a number was expected")]
     BoolInMath,
-    #[error("An identifier was not found")]
+    #[error("The identifier was not found {}", 0)]
     IdentNotFound(String),
 }
 
