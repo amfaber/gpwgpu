@@ -13,7 +13,7 @@ var<storage, read_write> output: f32;
 
 var<push_constant> pc: PushConstants;
 
-@compute @workgroup_size(#WG_X, #WG_Y, #WG_Z)
+@compute @workgroup_size(1, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
 	// Not checking if we are outside the alloted amount of work, as only 1 invocation of this function should ever be started.
 	// i.e. workgroup_size(1, 1, 1), dispatcher(1, 1, 1)

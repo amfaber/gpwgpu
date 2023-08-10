@@ -4,7 +4,7 @@ use bytemuck::Pod;
 #[allow(unused)]
 use my_core::shaderpreprocessor::ShaderProcessor;
 
-use my_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline}, parser::{Definition, ExpansionError}, utils::{FullComputePass, any_as_u8_slice}};
+use my_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline}, parser::{Definition, ExpansionError}, utils::{FullComputePass, any_as_u8_slice, Encoder}};
 
 use super::PREPROCESSOR;
 
@@ -137,7 +137,7 @@ impl<const N: usize> SeparableConvolution<N>{
 
     pub fn execute(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut Encoder,
         extra_push_constants: &[u8],
     ){
         self.execute_many_push(encoder, [extra_push_constants; N])
@@ -145,7 +145,7 @@ impl<const N: usize> SeparableConvolution<N>{
 
     pub fn execute_many_push(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut Encoder,
         extra_push_constants: [impl Deref<Target = [u8]>; N],
     ){
         let mut dims = self.dims.clone();
@@ -253,7 +253,7 @@ impl<const N: usize> GaussianSmoothing<N> {
 
     pub fn execute(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut Encoder,
         sigma: [f32; N],
     ){
         let push = sigma.iter().map(|s| unsafe{ any_as_u8_slice(s) }).collect::<Vec<_>>();
@@ -376,7 +376,7 @@ var<storage, read_write> final_output: array<f32>;";
 
     pub fn execute(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut Encoder,
         sigma: [f32; N],
     ){
         encoder.clear_buffer(self.output, 0, None);

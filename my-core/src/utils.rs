@@ -1,8 +1,16 @@
 use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
-use std::{borrow::Cow, collections::HashMap, mem::size_of, ops::Bound, rc::Rc};
-use wgpu::{self, util::DeviceExt, MAP_ALIGNMENT};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    fmt::Write,
+    mem::size_of,
+    ops::{Bound, Deref, DerefMut},
+    path::PathBuf,
+    rc::Rc,
+};
+use wgpu::{self, util::DeviceExt, CommandEncoder, MAP_ALIGNMENT};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
 
@@ -234,16 +242,16 @@ pub unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkgroupSize<'a> {
+pub struct WorkgroupSize {
     pub x: u32,
     pub y: u32,
     pub z: u32,
-    pub x_name: Cow<'a, str>,
-    pub y_name: Cow<'a, str>,
-    pub z_name: Cow<'a, str>,
+    pub x_name: Cow<'static, str>,
+    pub y_name: Cow<'static, str>,
+    pub z_name: Cow<'static, str>,
 }
 
-impl<'a> WorkgroupSize<'a> {
+impl WorkgroupSize {
     pub fn new(x: u32, y: u32, z: u32) -> Self {
         Self {
             x,
@@ -256,13 +264,13 @@ impl<'a> WorkgroupSize<'a> {
     }
 }
 
-impl From<(u32, u32, u32)> for WorkgroupSize<'static> {
+impl From<(u32, u32, u32)> for WorkgroupSize {
     fn from(value: (u32, u32, u32)) -> Self {
         Self::new(value.0, value.1, value.2)
     }
 }
 
-impl From<[u32; 3]> for WorkgroupSize<'static> {
+impl From<[u32; 3]> for WorkgroupSize {
     fn from(value: [u32; 3]) -> Self {
         Self::new(value[0], value[1], value[2])
     }
@@ -337,6 +345,180 @@ impl<'a> Dispatcher<'a> {
     }
 }
 
+#[derive(Clone)]
+pub struct DebugBundle<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub inspects: Vec<InspectBuffer<'a>>,
+    pub save_path: PathBuf,
+    pub create_py: bool,
+}
+
+pub struct DebugEncoder<'a> {
+    pub encoder: CommandEncoder,
+    pub debug_bundle: Option<DebugBundle<'a>>,
+    pub debug_active: (bool, bool),
+}
+
+#[must_use]
+pub enum InspectStatus {
+    Inactive,
+    Success,
+    NoDebugBundle,
+    NoBuffers,
+}
+
+impl InspectStatus {
+    #[track_caller]
+    pub fn unwrap(&self) {
+        match self {
+            Self::Inactive => (),
+            Self::Success => panic!("Deliberate panic after inspecting buffers"),
+            Self::NoDebugBundle => panic!("Inspect buffers was called without a debug bundle"),
+            Self::NoBuffers => panic!("The inspect buffers vector is empty"),
+        }
+    }
+}
+
+impl<'a> DebugEncoder<'a> {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let encoder = device.create_command_encoder(&Default::default());
+        Self {
+            encoder,
+            debug_bundle: None,
+            debug_active: (false, false),
+        }
+    }
+    pub fn set_debug_bundle(&mut self, debug_bundle: DebugBundle<'a>) {
+        self.debug_bundle = Some(debug_bundle);
+    }
+    pub fn activate(&mut self) {
+        self.debug_active.0 = true;
+    }
+    pub fn inactivate(&mut self) {
+        self.debug_active.0 = false;
+    }
+    pub fn activate_primed(&mut self) {
+        if self.debug_active.1 {
+            self.debug_active.0 = true
+        }
+    }
+    pub fn prime(&mut self) {
+        self.debug_active.1 = true;
+    }
+    pub fn unprime(&mut self) {
+        self.debug_active.1 = false;
+    }
+    pub fn finish(self) -> wgpu::CommandBuffer {
+        self.encoder.finish()
+    }
+    pub fn submit(self, queue: &wgpu::Queue) -> wgpu::SubmissionIndex {
+        queue.submit(Some(self.encoder.finish()))
+    }
+
+    pub fn inspect_buffers(&mut self) -> InspectStatus {
+        let DebugEncoder {
+            encoder,
+            debug_bundle,
+            debug_active,
+        } = self;
+
+        if !debug_active.0 {
+            return InspectStatus::Inactive;
+        }
+
+        let Some(DebugBundle {
+            device,
+            queue,
+            inspects,
+            save_path,
+            create_py,
+        }) = debug_bundle else {
+            return InspectStatus::NoDebugBundle
+        };
+
+        let encoder =
+            std::mem::replace(encoder, device.create_command_encoder(&Default::default()));
+        queue.submit(Some(encoder.finish()));
+
+        let max_size = match inspects.iter().max_by_key(|&inspect| inspect.size) {
+            Some(inspect_buffer) => inspect_buffer.size,
+            None => return InspectStatus::NoBuffers,
+        };
+
+        let mappable_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mappable buffer for inspect"),
+            size: max_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        for InspectBuffer { buffer, size, name } in inspects.iter() {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            encoder.clear_buffer(&mappable_buffer, 0, None);
+            encoder.copy_buffer_to_buffer(buffer, 0, &mappable_buffer, 0, *size);
+            queue.submit(Some(encoder.finish()));
+            let slice = mappable_buffer.slice(..*size);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::Maintain::Wait);
+            let data = slice.get_mapped_range().to_vec();
+            std::fs::write(&save_path.join(format!("{name}.bin")), &data).unwrap();
+            mappable_buffer.unmap();
+        }
+
+        if *create_py {
+            let contents = create_py_file(inspects.iter());
+            std::fs::write(&save_path.join("load.py"), &contents).unwrap();
+        }
+
+        InspectStatus::Success
+    }
+}
+
+impl<'a> Deref for DebugEncoder<'a> {
+    type Target = wgpu::CommandEncoder;
+    fn deref(&self) -> &Self::Target {
+        &self.encoder
+    }
+}
+
+impl<'a> DerefMut for DebugEncoder<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.encoder
+    }
+}
+
+pub struct NormalEncoder(CommandEncoder);
+
+impl NormalEncoder {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let encoder = device.create_command_encoder(&Default::default());
+        Self(encoder)
+    }
+    pub fn finish(self) -> wgpu::CommandBuffer {
+        self.0.finish()
+    }
+    pub fn submit(self, queue: &wgpu::Queue) -> wgpu::SubmissionIndex {
+        queue.submit(Some(self.0.finish()))
+    }
+}
+
+impl Deref for NormalEncoder {
+    type Target = wgpu::CommandEncoder;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for NormalEncoder {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+pub type Encoder<'a> = DebugEncoder<'a>;
+// pub type Encoder = NormalEncoder;
+
 #[derive(Debug)]
 pub struct FullComputePass {
     pub bindgroup: wgpu::BindGroup,
@@ -363,7 +545,7 @@ impl FullComputePass {
 
     pub fn execute_with_dispatcher(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut Encoder,
         push_constants: &[u8],
         dispatcher: &Dispatcher,
     ) {
@@ -386,7 +568,7 @@ impl FullComputePass {
         }
     }
 
-    pub fn execute(&self, encoder: &mut wgpu::CommandEncoder, push_constants: &[u8]) {
+    pub fn execute(&self, encoder: &mut Encoder, push_constants: &[u8]) {
         self.execute_with_dispatcher(
             encoder,
             push_constants,
@@ -404,83 +586,51 @@ impl FullComputePass {
     }
 }
 
-pub fn inspect_buffers<'a>(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    buffers_to_inspect: impl IntoIterator<Item = &'a wgpu::Buffer>,
-    // mappable_buffer: &wgpu::Buffer,
-    encoder: &mut wgpu::CommandEncoder,
-    file_path: impl AsRef<std::path::Path>,
-) -> ! {
-    let buffers_to_inspect =
-        buffers_to_inspect
-            .into_iter()
-            .enumerate()
-            .map(|(i, buf)| InspectBuffer {
-                buffer: buf,
-                size: buf.size(),
-                name: format!("dumpy{i}"),
-            });
-    inspect_buffers_size_name(
-        device,
-        queue,
-        buffers_to_inspect,
-        // mappable_buffer,
-        encoder,
-        file_path,
-    )
-}
-
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct InspectBuffer<'a> {
     pub buffer: &'a wgpu::Buffer,
     pub size: wgpu::BufferAddress,
     pub name: String,
 }
 
-pub fn inspect_buffers_size_name<'a>(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    buffers_to_inspect: impl IntoIterator<Item = InspectBuffer<'a>>,
-    // mappable_buffer: &wgpu::Buffer,
-    encoder: &mut wgpu::CommandEncoder,
-    file_path: impl AsRef<std::path::Path>,
-) -> ! {
-    let path = file_path.as_ref().to_owned();
-    let encoder = std::mem::replace(encoder, device.create_command_encoder(&Default::default()));
-    queue.submit(Some(encoder.finish()));
-
-    let inspects = Vec::from_iter(buffers_to_inspect);
-
-    let max_size = inspects
-        .iter()
-        .max_by_key(|&inspect| inspect.size)
-        .unwrap_or_else(|| panic!("No buffers provided"))
-        .size;
-
-    let mappable_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("mappable buffer for inspect"),
-        size: max_size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    for InspectBuffer { buffer, size, name } in inspects {
-        let mut encoder = device.create_command_encoder(&Default::default());
-        encoder.clear_buffer(&mappable_buffer, 0, None);
-        encoder.copy_buffer_to_buffer(buffer, 0, &mappable_buffer, 0, size);
-        queue.submit(Some(encoder.finish()));
-        let slice = mappable_buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        device.poll(wgpu::Maintain::Wait);
-        let data = slice.get_mapped_range()[..].to_vec();
-        let mut path = path.clone();
-        path.push(format!("{name}.bin"));
-        std::fs::write(&path, &data[..size as usize]).unwrap();
-        mappable_buffer.unmap();
+impl<'a> InspectBuffer<'a> {
+    pub fn new(
+        buf: &'a wgpu::Buffer,
+        size: Option<wgpu::BufferAddress>,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            buffer: buf,
+            size: size.unwrap_or(buf.size()),
+            name: name.into(),
+        }
     }
+}
 
-    panic!("intended panic")
+fn create_py_file<'a>(bufs: impl IntoIterator<Item = &'a InspectBuffer<'a>>) -> String {
+    let mut file = "import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+here = Path(__file__).parent
+__all__ = [\"np\", \"plt\"]
+
+"
+    .to_string();
+    for InspectBuffer {
+        buffer: _,
+        size: _,
+        name,
+    } in bufs
+    {
+        write!(
+            &mut file,
+            "{name} = np.fromfile(here/\"{name}.bin\", dtype = \"float32\")
+__all__.append(\"{name}\")
+"
+        )
+        .unwrap();
+    }
+    file
 }
 
 pub static SHADER_BINDGROUP_INFER: Lazy<Regex> =
@@ -538,14 +688,10 @@ pub fn infer_compute_bindgroup_layout(
             count: None,
         });
     }
-    // if !entries.is_empty(){
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label,
         entries: &entries[..],
     })
-    // } else {
-    //     None
-    // }
 }
 
 #[allow(unused_imports)]

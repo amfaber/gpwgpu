@@ -2,11 +2,11 @@ use std::{
     any::{self, type_name, Any, TypeId},
     cell::Cell,
     collections::HashMap,
-    fmt::{Debug, Write},
-    hash::Hash, path::PathBuf,
+    fmt::Debug,
+    hash::Hash,
 };
 
-use crate::utils::{inspect_buffers_size_name, InspectBuffer};
+use crate::utils::{DebugEncoder, Encoder, InspectBuffer};
 
 /// Communicates to the automatic buffer solution whether its okay for the buffer to
 /// contain trash from a previous compute pass. If the pass in which is it used
@@ -290,6 +290,43 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
                 .collect(),
         )
     }
+
+    pub fn get_inspect_buffers<T: Any>(&self) -> Vec<InspectBuffer> {
+        self.try_get_inspect_buffers::<T>().unwrap_or_else(|| {
+            panic!(
+                "Pass {:?} not found in \n{:#?}\n",
+                any::type_name::<T>(),
+                self
+            )
+        })
+    }
+
+    pub fn try_get_inspect_buffers<T: Any>(&self) -> Option<Vec<InspectBuffer>> {
+        let MapAndTypeName { map, type_name: _ } =
+            self.assignments.get(&std::any::TypeId::of::<T>())?;
+
+        Some(
+            map.iter()
+                .map(|(name, (idx, abs))| InspectBuffer {
+                    buffer: &self.buffers[*idx],
+                    size: abs.size,
+                    name: format!("{name:?}"),
+                })
+                .collect(),
+        )
+    }
+
+    pub fn all_inspect_buffers(&self) -> Vec<InspectBuffer> {
+        self.buffers
+            .iter()
+            .enumerate()
+            .map(|(i, buf)| InspectBuffer {
+                buffer: buf,
+                size: buf.size(),
+                name: format!("ConcreteBuffer{i}"),
+            })
+            .collect()
+    }
 }
 
 type SetUpReturn<P, B, E> =
@@ -316,11 +353,7 @@ pub trait SequentialOperation: 'static + Debug + Any {
     where
         Self: Sized;
 
-    fn execute(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        buffers: &BufferSolution<Self::BufferEnum>,
-    );
+    fn execute(&mut self, encoder: &mut Encoder, buffers: &BufferSolution<Self::BufferEnum>);
 
     fn set_up(
         device: &wgpu::Device,
@@ -442,7 +475,7 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static> AllO
             operations,
         })
     }
-    pub fn execute(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn execute(&self, encoder: &mut Encoder) {
         let mut operations = self.operations.take();
         for operation in operations.iter_mut() {
             operation.execute(encoder, &self.buffers);
@@ -450,75 +483,66 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static> AllO
         self.operations.set(operations);
     }
 
-    pub fn execute_with_inspect<T: 'static>(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        file_path: impl Into<PathBuf>,
-    ) -> ! {
+    pub fn execute_with_inspect<'a, T: 'static>(&'a self, encoder: &'a mut Encoder<'a>) {
         let mut operations = self.operations.take();
+        let mut type_found = false;
         let mut type_names = Vec::new();
+        encoder.activate();
         for operation in operations.iter_mut() {
             operation.execute(encoder, &self.buffers);
             let (id, name) = operation.my_type_id();
             if id == std::any::TypeId::of::<T>() {
+                type_found = true;
+                let DebugEncoder{ encoder: _, debug_bundle: Some(debug_bundle), debug_active } = encoder else { panic!("A debug bundle should be passed when using 'execute_with_inspect'") };
+                if !debug_active.0 {
+                    continue;
+                }
+
                 let buffers_to_inspect = self.buffers.assignments.get(&id).unwrap();
-                let bufs = buffers_to_inspect.map.iter().map(|(name, (idx, abs))|{
-                    InspectBuffer{
+                let bufs = buffers_to_inspect
+                    .map
+                    .iter()
+                    .map(|(name, (idx, abs))| InspectBuffer {
                         buffer: &self.buffers.buffers[*idx],
                         size: abs.size,
                         name: format!("{name:?}"),
-                    }
-                }).collect::<Vec<_>>();
-                let mut file_path: PathBuf = file_path.into();
-                let struct_name = name.split("::").last().expect("The struct didn't have a name?").replace("<", "").replace(">", "");
-                file_path.push(struct_name);
-                if !file_path.exists(){
-                    std::fs::create_dir(&file_path).expect("The directory {file_path} could not be created");
+                    })
+                    .collect::<Vec<_>>();
+
+                debug_bundle.inspects = bufs;
+
+                let struct_name = name
+                    .split("::")
+                    .last()
+                    .expect("The struct didn't have a name?")
+                    .replace("<", "")
+                    .replace(">", "");
+                debug_bundle.save_path.push(struct_name);
+                if !debug_bundle.save_path.exists() {
+                    std::fs::create_dir(&debug_bundle.save_path)
+                        .expect("The directory {file_path} could not be created");
                 }
-                let load_name = file_path.join("load.py");
-                // if !load_name.exists(){
-                let py_file = create_py_file(&bufs);
-                std::fs::write(load_name, py_file).unwrap();
-                // }
-                inspect_buffers_size_name(
-                    device,
-                    queue,
-                    bufs,
-                    encoder,
-                    file_path,
-                )
+
+                encoder.inspect_buffers().unwrap();
             } else {
                 type_names.push(name);
             }
         }
 
-        let mut new_encoder = device.create_command_encoder(&Default::default());
-        std::mem::swap(&mut new_encoder, encoder);
-        new_encoder.finish();
-        panic!(
-            "Type {} not found all operations. No buffers have been dumped. All operations: {:#?}",
-            std::any::type_name::<T>(),
-            type_names
-        );
+        if !type_found {
+            let DebugEncoder{ encoder: _, debug_bundle: Some(debug_bundle), debug_active: _ } = encoder else { panic!("A debug bundle should be passed when using 'execute_with_inspect'") };
+            let mut new_encoder = debug_bundle
+                .device
+                .create_command_encoder(&Default::default());
+            std::mem::swap(&mut new_encoder, encoder);
+            new_encoder.finish();
+            panic!(
+                "Type {} not found all operations. No buffers have been dumped. All operations: {:#?}",
+                std::any::type_name::<T>(),
+                type_names
+            );
+        }
     }
-}
-
-fn create_py_file<'a>(bufs: impl IntoIterator<Item = &'a InspectBuffer<'a>>) -> String{
-    let mut file = "import matplotlib.pyplot as plt
-import numpy as np
-from pathlib import Path
-here = Path(__file__).parent
-__all__ = [\"np\", \"plt\"]
-
-".to_string();
-    for InspectBuffer { buffer: _, size: _, name } in bufs{
-        write!(&mut file, "{name} = np.fromfile(here/\"{name}.bin\", dtype = \"float32\")
-__all__.append(\"{name}\")
-").unwrap();
-    }
-    file
 }
 
 impl<B: 'static + Hash + Eq + Clone + Copy + Debug> Debug for MapAndTypeName<B> {

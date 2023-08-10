@@ -1,18 +1,26 @@
 #![allow(unused_imports)]
-use std::{time::{Duration, Instant}, collections::HashMap, io::Read};
+use std::{
+    collections::HashMap,
+    io::Read,
+    time::{Duration, Instant},
+};
 
 use bytemuck::Pod;
 use gpwgpu::{
+    automatic_buffers::MemoryReq,
     operations::{
-        convolutions::{GaussianSmoothing, GaussianLaplace},
+        convolutions::{GaussianLaplace, GaussianSmoothing},
         reductions::{Reduce, ReductionType, StandardDeviationReduce},
     },
-    parser::{parse_tokens, Token, process, Definition, trim_trailing_spaces, NestedFor},
+    parser::{parse_tokens, process, trim_trailing_spaces, Definition, NestedFor, Token},
     shaderpreprocessor::{ShaderProcessor, ShaderSpecs},
-    utils::{default_device, inspect_buffers, read_buffer, FullComputePass}, automatic_buffers::MemoryReq,
+    utils::{
+        default_device, read_buffer, DebugBundle, Encoder, FullComputePass,
+        InspectBuffer,
+    },
 };
 use macros::*;
-use ndarray::{Array, Axis, Array3};
+use ndarray::{Array, Array3, Axis};
 use pollster::FutureExt;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -63,8 +71,7 @@ fn standard_deviation() {
         )
         .unwrap();
 
-        let mut encoder = device.create_command_encoder(&Default::default());
-
+        let mut encoder = Encoder::new(&device);
         std.execute(&mut encoder);
         queue.submit(Some(encoder.finish()));
         device.poll(wgpu::MaintainBase::Wait);
@@ -146,7 +153,8 @@ fn max() {
         )
         .unwrap();
 
-        let mut encoder = device.create_command_encoder(&Default::default());
+        // let mut encoder = device.create_command_encoder(&Default::default());
+        let mut encoder = Encoder::new(&device);
 
         reduction.execute(&mut encoder, &[]);
 
@@ -170,11 +178,12 @@ fn max() {
 }
 
 #[test]
+#[should_panic]
 fn gaussian_smoothing_2d() {
     let (device, queue) = default_device().block_on().unwrap();
-    
+
     let (data, shape) = load_lion();
-    
+
     let inp = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&data),
@@ -195,42 +204,42 @@ fn gaussian_smoothing_2d() {
         mapped_at_creation: false,
     });
 
-    let readable = device.create_buffer(&BufferDescriptor {
-        label: None,
-        size: inp.size(),
-        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    
+    // let readable = device.create_buffer(&BufferDescriptor {
+    //     label: None,
+    //     size: inp.size(),
+    //     usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+    //     mapped_at_creation: false,
+    // });
 
     let smoothing = GaussianSmoothing::new(&device, shape, &inp, &temp, &out).unwrap();
-    let mut encoder = device.create_command_encoder(&Default::default());
-    smoothing.execute(&mut encoder, [5.0; 2]);
-    inspect_buffers(
-        &[
-            &inp,
-            &temp,
-            &out,
+    // let mut encoder = device.create_command_encoder(&Default::default());
+    let mut encoder = Encoder::new(&device);
+    encoder.set_debug_bundle(DebugBundle {
+        device: &device,
+        queue: &queue,
+        inspects: vec![
+            InspectBuffer::new(&inp, None, "Input"),
+            InspectBuffer::new(&temp, None, "Temp"),
+            InspectBuffer::new(&out, None, "Out"),
         ],
-        &readable,
-        &queue,
-        &mut encoder,
-        &device,
-        "tests/dumps",
-    );
-
+        save_path: "tests/dumps".into(),
+        create_py: false,
+    });
+    smoothing.execute(&mut encoder, [5.0; 2]);
+    encoder.inspect_buffers().unwrap();
 }
 
-fn _load_cells() -> (Array3<f32>, [i32; 3]){
+fn _load_cells() -> (Array3<f32>, [i32; 3]) {
     let mut file = std::fs::File::open("tests/images/cells3d.bin").unwrap();
     let mut data_init = Vec::<u16>::with_capacity(
-        file.metadata().unwrap().len() as usize / std::mem::size_of::<u16>()
+        file.metadata().unwrap().len() as usize / std::mem::size_of::<u16>(),
     );
-    unsafe{
+    unsafe {
         data_init.set_len(data_init.capacity());
     }
-    
-    file.read(bytemuck::cast_slice_mut(&mut data_init[..])).unwrap();
+
+    file.read(bytemuck::cast_slice_mut(&mut data_init[..]))
+        .unwrap();
     let data = Array::from_shape_vec((60, 2, 256, 256), data_init).unwrap();
     let channel = 1;
     let data_owned = data.index_axis(Axis(1), channel).mapv(|val| val as f32);
@@ -244,7 +253,7 @@ fn _load_cells() -> (Array3<f32>, [i32; 3]){
     (data_owned, shape)
 }
 
-struct DefaultBuffers{
+struct DefaultBuffers {
     inp: wgpu::Buffer,
     temp: wgpu::Buffer,
     temp2: wgpu::Buffer,
@@ -252,8 +261,8 @@ struct DefaultBuffers{
     readable: wgpu::Buffer,
 }
 
-impl DefaultBuffers{
-    fn new<T: Pod>(device: &wgpu::Device, data: &[T]) -> Self{
+impl DefaultBuffers {
+    fn new<T: Pod>(device: &wgpu::Device, data: &[T]) -> Self {
         let inp = device.create_buffer_init(&BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(&data),
@@ -266,7 +275,7 @@ impl DefaultBuffers{
             usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-    
+
         let temp2 = device.create_buffer(&BufferDescriptor {
             label: None,
             size: inp.size(),
@@ -287,25 +296,24 @@ impl DefaultBuffers{
             usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-    
-        Self{
+
+        Self {
             inp,
             temp,
             temp2,
             out,
             readable,
         }
-        
     }
 }
 
-fn create_blob(shape: [i32; 3], r: f32) -> Array3<f32>{
+fn create_blob(shape: [i32; 3], r: f32) -> Array3<f32> {
     let [im, jm, km] = shape.map(|x| x as f32);
-    
-    let data = Array::from_shape_fn(shape.map(|x| x as usize), |(i, j, k)|{
-        let (x, y, z) = (i as f32 - im/2., j as f32 - jm/2., k as f32 - km/2.);
+
+    let data = Array::from_shape_fn(shape.map(|x| x as usize), |(i, j, k)| {
+        let (x, y, z) = (i as f32 - im / 2., j as f32 - jm / 2., k as f32 - km / 2.);
         let this_r = (x.powi(2) + y.powi(2) + z.powi(2)).sqrt();
-        if this_r < r{
+        if this_r < r {
             1.0
         } else {
             0.0
@@ -315,36 +323,38 @@ fn create_blob(shape: [i32; 3], r: f32) -> Array3<f32>{
 }
 
 #[test]
-fn smoothing_3d(){
-
+fn smoothing_3d() {
     let (device, queue) = default_device().block_on().unwrap();
-    
+
     // let (data_owned, shape) = load_cells();
 
     let shape = [100, 100, 100];
     let data_owned = create_blob(shape, 3.);
-    
+
     let data = data_owned.as_slice().unwrap();
 
     let bufs = DefaultBuffers::new(&device, data);
-    
-    let mut encoder = device.create_command_encoder(&Default::default());
-    if false{
-        let smoothing = GaussianSmoothing::new(&device, shape, &bufs.inp, &bufs.temp, &bufs.out).unwrap();
+
+    // let mut encoder = device.create_command_encoder(&Default::default());
+    let mut encoder = Encoder::new(&device);
+    if false {
+        let smoothing =
+            GaussianSmoothing::new(&device, shape, &bufs.inp, &bufs.temp, &bufs.out).unwrap();
         smoothing.execute(&mut encoder, [5.0, 5.0, 2.0]);
     } else {
-        let laplace = GaussianLaplace::new(&device, shape, &bufs.inp, &bufs.temp, &bufs.temp2, &bufs.out).unwrap();
+        let laplace = GaussianLaplace::new(
+            &device,
+            shape,
+            &bufs.inp,
+            &bufs.temp,
+            &bufs.temp2,
+            &bufs.out,
+        )
+        .unwrap();
         laplace.execute(&mut encoder, [4.0, 4.0, 4.0]);
     }
 
-    
-    encoder.copy_buffer_to_buffer(
-        &bufs.out,
-        0,
-        &bufs.readable,
-        0,
-        bufs.inp.size()
-    );
+    encoder.copy_buffer_to_buffer(&bufs.out, 0, &bufs.readable, 0, bufs.inp.size());
 
     queue.submit(Some(encoder.finish()));
 
@@ -352,11 +362,11 @@ fn smoothing_3d(){
     std::fs::write("tests/dumps/3d_smoothed.bin", &result).unwrap();
 
     // println!("{}", shape);
-    
+
     let shape0 = shape[0];
     let shape1 = shape[1];
     let shape2 = shape[2];
-    
+
     std::process::Command::new("python")
         .arg("-c")
         .arg(format!(r#"\
@@ -368,9 +378,9 @@ tifffile.imsave("tests/dumps/3d_smoothed.tif", arr)"#
         )).status().unwrap();
 }
 
-fn load_lion() -> (Vec<f32>, [i32; 2]){
+fn load_lion() -> (Vec<f32>, [i32; 2]) {
     let file = std::fs::File::open("tests/images/grey_lion.tiff").unwrap();
-    
+
     let mut decoder = tiff::decoder::Decoder::new(file).unwrap();
 
     let (width, height) = decoder.dimensions().unwrap();
@@ -385,11 +395,12 @@ fn load_lion() -> (Vec<f32>, [i32; 2]){
 }
 
 #[test]
+#[should_panic]
 fn laplace() {
     let (device, queue) = default_device().block_on().unwrap();
-    
+
     let (data, shape) = load_lion();
-    
+
     let inp = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&data),
@@ -417,30 +428,22 @@ fn laplace() {
         mapped_at_creation: false,
     });
 
-    let readable = device.create_buffer(&BufferDescriptor {
-        label: None,
-        size: inp.size(),
-        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    
-
     let laplace = GaussianLaplace::new(&device, shape, &inp, &temp, &temp2, &out).unwrap();
-    let mut encoder = device.create_command_encoder(&Default::default());
-    laplace.execute(&mut encoder, [5.0; 2]);
-    inspect_buffers(
-        &[
-            &inp,
-            &temp,
-            &out,
+    // let mut encoder = device.create_command_encoder(&Default::default());
+    let mut encoder = Encoder::new(&device);
+    encoder.set_debug_bundle(DebugBundle {
+        device: &device,
+        queue: &queue,
+        inspects: vec![
+            InspectBuffer::new(&inp, None, "Input"),
+            InspectBuffer::new(&temp, None, "Temp"),
+            InspectBuffer::new(&out, None, "Out"),
         ],
-        &readable,
-        &queue,
-        &mut encoder,
-        &device,
-        "tests/dumps",
-    );
-
+        save_path: "tests/dumps".into(),
+        create_py: false,
+    });
+    laplace.execute(&mut encoder, [5.0; 2]);
+    encoder.inspect_buffers().unwrap();
 }
 
 #[test]
@@ -461,7 +464,7 @@ fn parser_test() {
     let mut out = Vec::new();
     let reps = 1e4 as usize;
     let now = std::time::Instant::now();
-    for _ in 0..reps{
+    for _ in 0..reps {
         let (_input, output) = parse_tokens(data).unwrap();
         out = output;
     }
@@ -472,69 +475,82 @@ fn parser_test() {
     dbg!(data.len());
     dbg!(ser.len());
     let de_time = std::time::Instant::now();
-    for _ in 0..reps{
+    for _ in 0..reps {
         bincode::deserialize::<Vec<Token>>(&ser).unwrap();
     }
     dbg!(de_time.elapsed());
 
-    println!("{}", process(out.clone(), |s|{
-        if s == "RINT"{
-            Some(Definition::Int(3))
-        } else if s == "idk"{
-            Some(Definition::Int(3))
-        } else {
-            None
-        }
-    }).unwrap());
+    println!(
+        "{}",
+        process(out.clone(), |s| {
+            if s == "RINT" {
+                Some(Definition::Int(3))
+            } else if s == "idk" {
+                Some(Definition::Int(3))
+            } else {
+                None
+            }
+        })
+        .unwrap()
+    );
 
     println!("--------------------");
 
-    println!("{}", process(out, |s|{
-        if s == "RINT"{
-            Some(Definition::Int(3))
-        } else if s == "idk"{
-            Some(Definition::Int(4))
-        } else {
-            None
-        }
-    }).unwrap());
+    println!(
+        "{}",
+        process(out, |s| {
+            if s == "RINT" {
+                Some(Definition::Int(3))
+            } else if s == "idk" {
+                Some(Definition::Int(4))
+            } else {
+                None
+            }
+        })
+        .unwrap()
+    );
     // drop(ser);
     // dbg!(de);
     // dbg!(bincode::serialize(&out));
 }
 
 #[test]
-fn nested_for(){
+fn nested_for() {
     let data = "#nest I = N { for (var i#I: i32 = #I; i#I < 2*#I; i += 1) }
     #pre { 1+1; }
     #inner { #concat I in 0..N {pow(f32(i#I), 2.)} { + } }";
 
-    
     let (_input, tokens) = parse_tokens(data).unwrap();
     dbg!(&tokens);
 
-    println!("{}", process(tokens, |_s| Some(Definition::Int(3))).unwrap());
+    println!(
+        "{}",
+        process(tokens, |_s| Some(Definition::Int(3))).unwrap()
+    );
 }
 
 #[test]
-fn not(){
+fn not() {
     let data = "#if !TEST{
         Hi
     }
     outside";
     let (_input, tokens) = parse_tokens(data).unwrap();
 
-    dbg!(process(tokens.clone(), |_s| Some(Definition::Bool(true))).unwrap().as_str());
+    dbg!(process(tokens.clone(), |_s| Some(Definition::Bool(true)))
+        .unwrap()
+        .as_str());
 
     dbg!(process(tokens, |_s| Some(Definition::Bool(false))).unwrap());
 }
 
 #[test]
-fn parse_expr(){
+fn parse_expr() {
     let data = "#expr{ 1 + N }";
 
     let (_input, tokens) = parse_tokens(data).unwrap();
 
-    dbg!(process(tokens.clone(), |_s| Some(Definition::Int(5))).unwrap().as_str());
-
+    dbg!(process(tokens.clone(), |_s| Some(Definition::Int(5)))
+        .unwrap()
+        .as_str());
 }

@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use my_core::{utils::FullComputePass, parser::{ExpansionError, Definition}, shaderpreprocessor::ShaderSpecs};
+use my_core::{utils::{FullComputePass, Encoder}, parser::{ExpansionError, Definition}, shaderpreprocessor::ShaderSpecs};
 
 use super::PREPROCESSOR;
 
@@ -113,7 +113,7 @@ impl BinaryOutplace{
             Some(output),
         )?))
     }
-    pub fn execute(&self, encoder: &mut wgpu::CommandEncoder){
+    pub fn execute(&self, encoder: &mut Encoder){
         self.0.execute(encoder, &[]);
     }
 }
@@ -137,7 +137,7 @@ impl BinaryInplace{
             None,
         )?))
     }
-    pub fn execute(&self, encoder: &mut wgpu::CommandEncoder){
+    pub fn execute(&self, encoder: &mut Encoder){
         self.0.execute(encoder, &[]);
     }
 }
@@ -161,7 +161,7 @@ impl UnaryInplace{
             None,
         )?))
     }
-    pub fn execute(&self, encoder: &mut wgpu::CommandEncoder){
+    pub fn execute(&self, encoder: &mut Encoder){
         self.0.execute(encoder, &[]);
     }
 }
@@ -186,7 +186,7 @@ impl UnaryOutplace{
             Some(output),
         )?))
     }
-    pub fn execute(&self, encoder: &mut wgpu::CommandEncoder){
+    pub fn execute(&self, encoder: &mut Encoder){
         self.0.execute(encoder, &[]);
     }
 }

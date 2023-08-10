@@ -2,7 +2,6 @@ use crate::shaderpreprocessor::*;
 use crate::utils::*;
 use my_core::parser::Definition;
 use my_core::parser::ExpansionError;
-use wgpu::CommandEncoder;
 
 use super::PREPROCESSOR;
 
@@ -16,31 +15,30 @@ pub enum ReductionType {
 }
 
 impl ReductionType {
-    fn to_shader_val(&self) -> (String, Definition) {
-        let op_str = "OPERATION".to_string();
+    fn to_shader_val(&self) -> (&'static str, Definition) {
         match self {
-            Self::Sum => (op_str, Definition::Any("acc += datum;".into())),
-            Self::Product => (op_str, Definition::Any("acc *= datum;".into())),
-            Self::Min => (op_str, Definition::Any("acc = min(acc, datum);".into())),
-            Self::Max => (op_str, Definition::Any("acc = max(acc, datum);".into())),
-            Self::Custom(operation) => (op_str, Definition::Any(operation.into())),
+            Self::Sum => ("OPERATION", Definition::Any("acc += datum;".into())),
+            Self::Product => ("OPERATION", Definition::Any("acc *= datum;".into())),
+            Self::Min => ("OPERATION", Definition::Any("acc = min(acc, datum);".into())),
+            Self::Max => ("OPERATION", Definition::Any("acc = max(acc, datum);".into())),
+            Self::Custom(operation) => ("OPERATION", Definition::Any(operation.into())),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Reduce<'wg> {
+pub struct Reduce {
     outplace_pass: Option<FullComputePass>,
     inplace_pass: FullComputePass,
 
     last_reduction: FullComputePass,
     size: usize,
-    workgroup_size: WorkgroupSize<'wg>,
+    workgroup_size: WorkgroupSize,
     unroll: u32,
     last_size: u32,
 }
 
-impl<'wg> Reduce<'wg> {
+impl Reduce {
     pub fn new<'buf, 'proc>(
         device: &wgpu::Device,
         input: &wgpu::Buffer,
@@ -53,7 +51,7 @@ impl<'wg> Reduce<'wg> {
         // Each thread adds this many numbers at a time
         unroll: u32,
         // This is to allow passing the workgroup size, push constant size, entry point and so on.
-        specs: ShaderSpecs<'wg, '_>,
+        specs: ShaderSpecs<'_>,
 
         extra_push: String,
         extra_last: String,
@@ -72,15 +70,14 @@ impl<'wg> Reduce<'wg> {
                 let outplace_specs = specs.clone();
                 let outplace_specs = outplace_specs
                     .extend_defs([
-                        ("NANPROTECT".into(), Definition::Bool(nanprotection)),
-                        ("OUTPLACE".into(), Definition::Bool(true)),
-                        ("UNROLL".into(), Definition::UInt(unroll)),
+                        ("NANPROTECT", nanprotection.into()),
+                        ("OUTPLACE", true.into()),
+                        ("UNROLL", unroll.into()),
                         ty.to_shader_val(),
                     ])
                     .labels("outplace");
-                
-                let shader = PREPROCESSOR
-                    .process_by_name("reduce", outplace_specs)?;
+
+                let shader = PREPROCESSOR.process_by_name("reduce", outplace_specs)?;
                 let outplace = shader.build(device);
 
                 let bindgroup = [(0, input), (1, output)];
@@ -100,7 +97,6 @@ impl<'wg> Reduce<'wg> {
                 ])
                 .labels(inplace_label);
             let inplace = PREPROCESSOR.process_by_name("reduce", specs)?;
-            // print!("{}", inplace.source);
             let inplace = inplace.build(device);
 
             let bindgroup = [(
@@ -118,7 +114,10 @@ impl<'wg> Reduce<'wg> {
             let specs = ShaderSpecs::new((1, 1, 1))
                 .direct_dispatcher(&[1, 1, 1])
                 .extend_defs([
-                    ("EXTRAPUSHCONSTANTS".into(), Definition::Any(extra_push.into())),
+                    (
+                        "EXTRAPUSHCONSTANTS".into(),
+                        Definition::Any(extra_push.into()),
+                    ),
                     ("EXTRABUFFERS".into(), Definition::Any(extra_buffers.into())),
                     ("EXTRALAST".into(), Definition::Any(extra_last.into())),
                     ty.to_shader_val(),
@@ -156,17 +155,17 @@ impl<'wg> Reduce<'wg> {
         })
     }
 
-    fn interal_execute(
+    fn internal_execute(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut Encoder,
         pass: &FullComputePass,
         length: &mut u32,
     ) {
         let to_start = (*length + self.unroll - 1) / self.unroll;
-        let dispatcher = Dispatcher::new_direct(&[*length, 1, 1], &self.workgroup_size);
+        let dispatcher = Dispatcher::new_direct(&[to_start, 1, 1], &self.workgroup_size);
         pass.execute_with_dispatcher(
             encoder,
-            unsafe { any_as_u8_slice(&(to_start, *length)) },
+            bytemuck::bytes_of(&[to_start, *length]),
             &dispatcher,
         );
         *length = to_start;
@@ -174,24 +173,19 @@ impl<'wg> Reduce<'wg> {
 
     pub fn execute(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut Encoder,
         last_reduction_additional_pushconstants: &[u8],
     ) {
         let mut length = self.size as u32;
 
         if let Some(outplace_pass) = &self.outplace_pass {
-            self.interal_execute(encoder, outplace_pass, &mut length)
+            self.internal_execute(encoder, outplace_pass, &mut length)
         }
 
-        // let mut it = 0;
         while length > self.last_size {
-            self.interal_execute(encoder, &self.inplace_pass, &mut length);
-            // if it == 2{
-            //     return ;
-            // }
-            // it += 1;
+            self.internal_execute(encoder, &self.inplace_pass, &mut length);
         }
-        let mut last_pushconstants = unsafe { any_as_u8_slice(&length) }.to_vec();
+        let mut last_pushconstants = bytemuck::bytes_of(&length).to_vec();
         last_pushconstants.extend_from_slice(last_reduction_additional_pushconstants);
         let dispatcher = Dispatcher::Direct([1, 1, 1]);
         self.last_reduction
@@ -200,11 +194,11 @@ impl<'wg> Reduce<'wg> {
 }
 
 #[derive(Debug)]
-struct MeanReduce<'wg> {
-    reduction: Reduce<'wg>,
+struct MeanReduce {
+    reduction: Reduce,
 }
 
-impl<'wg> MeanReduce<'wg> {
+impl MeanReduce {
     pub fn new(
         device: &wgpu::Device,
         input: &wgpu::Buffer,
@@ -213,7 +207,7 @@ impl<'wg> MeanReduce<'wg> {
         output: &wgpu::Buffer,
         size: usize,
         unroll: u32,
-        specs: ShaderSpecs<'wg, '_>,
+        specs: ShaderSpecs<'_>,
         last_size: u32,
     ) -> Result<Self, ExpansionError> {
         let extra_buffers = match divisor {
@@ -256,19 +250,19 @@ var<storage, read> mean_divisor: u32;"
         Ok(Self { reduction })
     }
 
-    pub fn execute(&self, encoder: &mut CommandEncoder) {
+    pub fn execute(&self, encoder: &mut Encoder) {
         self.reduction.execute(encoder, &[]);
     }
 }
 
 #[derive(Debug)]
-pub struct StandardDeviationReduce<'wg> {
-    mean: MeanReduce<'wg>,
+pub struct StandardDeviationReduce {
+    mean: MeanReduce,
     square_residuals: FullComputePass,
-    mean_and_sqrt: Reduce<'wg>,
+    mean_and_sqrt: Reduce,
 }
 
-impl<'wg> StandardDeviationReduce<'wg> {
+impl StandardDeviationReduce {
     pub fn new(
         device: &wgpu::Device,
         input: &wgpu::Buffer,
@@ -277,7 +271,7 @@ impl<'wg> StandardDeviationReduce<'wg> {
         output: &wgpu::Buffer,
         size: usize,
         unroll: u32,
-        specs: ShaderSpecs<'wg, '_>,
+        specs: ShaderSpecs<'_>,
         last_size: u32,
     ) -> Result<Self, ExpansionError> {
         let mean = {
@@ -355,10 +349,9 @@ var<storage, read> mean_divisor: u32;"
         })
     }
 
-    pub fn execute(&self, encoder: &mut CommandEncoder) {
+    pub fn execute(&self, encoder: &mut Encoder) {
         self.mean.execute(encoder);
         self.square_residuals.execute(encoder, &[]);
         self.mean_and_sqrt.execute(encoder, &[]);
-        return;
     }
 }

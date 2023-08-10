@@ -16,8 +16,8 @@ pub struct NonBoundPipeline {
 }
 
 #[derive(Debug, Clone)]
-pub struct ShaderSpecs<'wg, 'def> {
-    pub workgroup_size: WorkgroupSize<'wg>,
+pub struct ShaderSpecs<'def> {
+    pub workgroup_size: WorkgroupSize,
     pub dispatcher: Option<Dispatcher<'static>>,
     pub push_constants: Option<u32>,
     pub shader_defs: HashMap<Cow<'def, str>, Definition<'def>>,
@@ -29,8 +29,8 @@ pub struct ShaderSpecs<'wg, 'def> {
     pub pipeline_label: Option<String>,
 }
 
-impl<'wg: 'def, 'def> ShaderSpecs<'wg, 'def> {
-    pub fn new(workgroup_size: impl Into<WorkgroupSize<'wg>>) -> Self {
+impl<'def> ShaderSpecs<'def> {
+    pub fn new(workgroup_size: impl Into<WorkgroupSize>) -> Self {
         let workgroup_size = workgroup_size.into();
         let shader_defs = HashMap::from([
             (workgroup_size.x_name.clone(), Definition::UInt(workgroup_size.x)),
@@ -50,7 +50,7 @@ impl<'wg: 'def, 'def> ShaderSpecs<'wg, 'def> {
         }
     }
 
-    pub fn workgroupsize(mut self, val: WorkgroupSize<'wg>) -> Self {
+    pub fn workgroupsize(mut self, val: WorkgroupSize) -> Self {
         self.workgroup_size = val;
         self
     }
@@ -70,7 +70,7 @@ impl<'wg: 'def, 'def> ShaderSpecs<'wg, 'def> {
         self
     }
 
-    pub fn extend_defs(mut self, vals: impl IntoIterator<Item = (impl Into<Cow<'wg, str>>, Definition<'def>)>) -> Self {
+    pub fn extend_defs(mut self, vals: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, Definition<'def>)>) -> Self {
         let iter = vals.into_iter().map(|(key, val)| (key.into(), val));
         self.shader_defs.extend(iter);
         self
@@ -112,12 +112,12 @@ impl<'wg: 'def, 'def> ShaderSpecs<'wg, 'def> {
 /// A processed [Shader]. This cannot contain preprocessor directions. It must be "ready to compile"
 
 #[derive(Clone)]
-pub struct ProcessedShader<'a, 'def> {
+pub struct ProcessedShader<'def> {
     pub source: String,
-    pub specs: ShaderSpecs<'a, 'def>,
+    pub specs: ShaderSpecs<'def>,
 }
 
-impl<'a, 'def> std::fmt::Debug for ProcessedShader<'a, 'def>{
+impl<'def> std::fmt::Debug for ProcessedShader<'def>{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = "\n".to_string();
 
@@ -133,7 +133,7 @@ impl<'a, 'def> std::fmt::Debug for ProcessedShader<'a, 'def>{
     }
 }
 
-impl<'a, 'def> ProcessedShader<'a, 'def> {
+impl<'def> ProcessedShader<'def> {
     pub fn get_source(&self) -> &str {
         &self.source
     }
@@ -256,8 +256,8 @@ impl<'a> ShaderProcessor<'a> {
     pub fn process_by_name<'wg, 'def>(
         &self,
         name: &str,
-        specs: ShaderSpecs<'wg, 'def>,
-    ) -> Result<ProcessedShader<'wg, 'def>, crate::parser::ExpansionError> {
+        specs: ShaderSpecs<'def>,
+    ) -> Result<ProcessedShader<'def>, crate::parser::ExpansionError> {
         let definitions = &specs.shader_defs;
         let lookup = |s: Cow<str>|{
             definitions.get(&s as &str).cloned()
