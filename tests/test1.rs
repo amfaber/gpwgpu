@@ -490,7 +490,7 @@ fn parser_test() {
             } else {
                 None
             }
-        })
+        }, |_| None)
         .unwrap()
     );
 
@@ -506,7 +506,7 @@ fn parser_test() {
             } else {
                 None
             }
-        })
+        }, |_| None)
         .unwrap()
     );
     // drop(ser);
@@ -525,7 +525,7 @@ fn nested_for() {
 
     println!(
         "{}",
-        process(tokens, |_s| Some(Definition::Int(3))).unwrap()
+        process(tokens, |_s| Some(Definition::Int(3)), |_| None).unwrap()
     );
 }
 
@@ -537,11 +537,11 @@ fn not() {
     outside";
     let (_input, tokens) = parse_tokens(data).unwrap();
 
-    dbg!(process(tokens.clone(), |_s| Some(Definition::Bool(true)))
+    dbg!(process(tokens.clone(), |_s| Some(Definition::Bool(true)), |_| None)
         .unwrap()
         .as_str());
 
-    dbg!(process(tokens, |_s| Some(Definition::Bool(false))).unwrap());
+    dbg!(process(tokens, |_s| Some(Definition::Bool(false)), |_| None).unwrap());
 }
 
 #[test]
@@ -550,7 +550,20 @@ fn parse_expr() {
 
     let (_input, tokens) = parse_tokens(data).unwrap();
 
-    dbg!(process(tokens.clone(), |_s| Some(Definition::Int(5)))
+    dbg!(process(tokens.clone(), |_s| Some(Definition::Int(5)), |_| None)
         .unwrap()
         .as_str());
+}
+
+#[test]
+fn import_testing(){
+    let data1 = "#export test {yoyoyo #N}".to_string();
+    let data2 = "#import test".to_string();
+
+    let hashmap = HashMap::from([
+        ("1".into(), data1),
+        ("2".into(), data2),
+    ]);
+    let processor = ShaderProcessor::from_shader_hashmap(&hashmap).unwrap();
+    dbg!(process(processor.shaders.get("2").unwrap().0.clone(), |_| Some(Definition::Int(2)), |import| processor.exports.get(&import).cloned()).unwrap());
 }
