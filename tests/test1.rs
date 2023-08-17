@@ -11,11 +11,12 @@ use gpwgpu::{
     operations::{
         convolutions::{GaussianLaplace, GaussianSmoothing},
         reductions::{Reduce, ReductionType, StandardDeviationReduce},
+        simple::new_simple,
     },
     parser::{parse_tokens, process, trim_trailing_spaces, Definition, NestedFor, Token},
     shaderpreprocessor::{ShaderProcessor, ShaderSpecs},
     utils::{
-        default_device, read_buffer, DebugBundle, Encoder, FullComputePass,
+        default_device, read_buffer, AccTime, DebugBundle, Dispatcher, Encoder, FullComputePass,
         InspectBuffer,
     },
 };
@@ -482,15 +483,19 @@ fn parser_test() {
 
     println!(
         "{}",
-        process(out.clone(), |s| {
-            if s == "RINT" {
-                Some(Definition::Int(3))
-            } else if s == "idk" {
-                Some(Definition::Int(3))
-            } else {
-                None
-            }
-        }, |_| None)
+        process(
+            out.clone(),
+            |s| {
+                if s == "RINT" {
+                    Some(Definition::Int(3))
+                } else if s == "idk" {
+                    Some(Definition::Int(3))
+                } else {
+                    None
+                }
+            },
+            |_| None
+        )
         .unwrap()
     );
 
@@ -498,15 +503,19 @@ fn parser_test() {
 
     println!(
         "{}",
-        process(out, |s| {
-            if s == "RINT" {
-                Some(Definition::Int(3))
-            } else if s == "idk" {
-                Some(Definition::Int(4))
-            } else {
-                None
-            }
-        }, |_| None)
+        process(
+            out,
+            |s| {
+                if s == "RINT" {
+                    Some(Definition::Int(3))
+                } else if s == "idk" {
+                    Some(Definition::Int(4))
+                } else {
+                    None
+                }
+            },
+            |_| None
+        )
         .unwrap()
     );
     // drop(ser);
@@ -537,9 +546,11 @@ fn not() {
     outside";
     let (_input, tokens) = parse_tokens(data).unwrap();
 
-    dbg!(process(tokens.clone(), |_s| Some(Definition::Bool(true)), |_| None)
-        .unwrap()
-        .as_str());
+    dbg!(
+        process(tokens.clone(), |_s| Some(Definition::Bool(true)), |_| None)
+            .unwrap()
+            .as_str()
+    );
 
     dbg!(process(tokens, |_s| Some(Definition::Bool(false)), |_| None).unwrap());
 }
@@ -550,20 +561,91 @@ fn parse_expr() {
 
     let (_input, tokens) = parse_tokens(data).unwrap();
 
-    dbg!(process(tokens.clone(), |_s| Some(Definition::Int(5)), |_| None)
-        .unwrap()
-        .as_str());
+    dbg!(
+        process(tokens.clone(), |_s| Some(Definition::Int(5)), |_| None)
+            .unwrap()
+            .as_str()
+    );
 }
 
 #[test]
-fn import_testing(){
+fn import_testing() {
     let data1 = "#export test {yoyoyo #N}".to_string();
     let data2 = "#import test".to_string();
 
-    let hashmap = HashMap::from([
-        ("1".into(), data1),
-        ("2".into(), data2),
-    ]);
+    let hashmap = HashMap::from([("1".into(), data1), ("2".into(), data2)]);
     let processor = ShaderProcessor::from_shader_hashmap(&hashmap).unwrap();
-    dbg!(process(processor.shaders.get("2").unwrap().0.clone(), |_| Some(Definition::Int(2)), |import| processor.exports.get(&import).cloned()).unwrap());
+    dbg!(process(
+        processor.shaders.get("2").unwrap().0.clone(),
+        |_| Some(Definition::Int(2)),
+        |import| processor.exports.get(&import).cloned()
+    )
+    .unwrap());
+}
+
+#[test]
+fn encoder_vs_pass() {
+    let (device, queue) = default_device().block_on().unwrap();
+
+    let buffer = device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: 512 * 512 * 4,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let readable = device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: 512 * 512 * 4,
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let full = new_simple(
+        &device,
+        512 * 512,
+        gpwgpu::operations::simple::OperationType::Add,
+        &buffer,
+        gpwgpu::operations::simple::UnaryBinary::Unary(1.),
+        None,
+    )
+    .unwrap();
+
+    let n = 100000;
+
+    let mut time = AccTime::new(true);
+    let mut encoder = Encoder::new(&device);
+    // time.start();
+    for _ in 0..n {
+        full.execute(&mut encoder, &[]);
+    }
+    encoder.copy_buffer_to_buffer(&buffer, 0, &readable, 0, readable.size());
+    queue.submit(Some(encoder.finish()));
+    time.start();
+    device.poll(wgpu::Maintain::Wait);
+    time.stop();
+    dbg!(time);
+
+    let data = read_buffer::<f32>(&device, &readable, 0, None);
+    dbg!(&data[..10]);
+
+    let mut time = AccTime::new(true);
+    let mut encoder = Encoder::new(&device);
+    let mut cpass = encoder.begin_compute_pass(&Default::default());
+    time.start();
+    for _ in 0..n {
+        cpass.set_bind_group(0, &full.bindgroup, &[]);
+        cpass.set_pipeline(&full.pipeline.compute_pipeline);
+        let Dispatcher::Direct([x, y, z]) = full.pipeline.dispatcher.as_ref().unwrap() else { panic!() };
+        cpass.dispatch_workgroups(*x, *y, *z);
+    }
+    drop(cpass);
+    encoder.copy_buffer_to_buffer(&buffer, 0, &readable, 0, readable.size());
+    queue.submit(Some(encoder.finish()));
+    time.start();
+    device.poll(wgpu::Maintain::Wait);
+    time.stop();
+    dbg!(time);
+    
+    let data = read_buffer::<f32>(&device, &readable, 0, None);
+    dbg!(&data[..10]);
 }

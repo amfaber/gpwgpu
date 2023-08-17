@@ -8,11 +8,60 @@ use std::{
     mem::size_of,
     ops::{Bound, Deref, DerefMut},
     path::{PathBuf, Path},
-    rc::Rc,
+    rc::Rc, time::{Duration, Instant},
 };
-use wgpu::{self, util::DeviceExt, CommandEncoder, MAP_ALIGNMENT};
+use wgpu::{self, util::DeviceExt, CommandEncoder, MAP_ALIGNMENT, RequestAdapterOptions};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
+
+pub enum AccTime{
+    Disabled,
+    Enabled{
+        acc: Duration,
+        now: Option<Instant>,
+    },
+}
+
+impl AccTime{
+    pub fn new(enabled: bool) -> Self{
+        if enabled{
+            Self::Enabled { acc: Duration::ZERO, now: None }
+        } else {
+            Self::Disabled
+        }
+    }
+
+    #[inline]
+    pub fn start(&mut self){
+        match self{
+            AccTime::Disabled => (),
+            AccTime::Enabled { acc: _, now } => {
+                *now = Some(Instant::now())
+            },
+        }
+    }
+
+    #[inline]
+    pub fn stop(&mut self){
+        match self{
+            AccTime::Disabled => (),
+            AccTime::Enabled { acc, now } => {
+                if let Some(now) = now.take(){
+                    *acc += now.elapsed()
+                }
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for AccTime{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self{
+            AccTime::Disabled => Ok(()),
+            AccTime::Enabled { acc, now: _ } => f.write_fmt(format_args!("{acc:?}")),
+        }
+    }
+}
 
 struct BufferPadding {
     unpadded_bytes_per_row: u32,
@@ -303,7 +352,11 @@ impl<'a, T: BindingGroup> BindingGroup for &T {
 
 pub async fn default_device() -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
     let instance = wgpu::Instance::new(Default::default());
-    let adapter = instance.request_adapter(&Default::default());
+    let adapter = instance.request_adapter(&RequestAdapterOptions{
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        force_fallback_adapter: false,
+        compatible_surface: None,
+    });
     let mut device_desc = wgpu::DeviceDescriptor::default();
     device_desc.limits.max_push_constant_size = 64;
     device_desc.features =
