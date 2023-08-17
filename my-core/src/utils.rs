@@ -7,12 +7,91 @@ use std::{
     fmt::Write,
     mem::size_of,
     ops::{Bound, Deref, DerefMut},
-    path::PathBuf,
+    path::{PathBuf, Path},
     rc::Rc,
 };
 use wgpu::{self, util::DeviceExt, CommandEncoder, MAP_ALIGNMENT};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
+
+struct BufferPadding {
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+}
+
+impl BufferPadding {
+    fn new(width: u32) -> Self {
+        let bytes_per_pixel = std::mem::size_of::<u32>() as u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let padded_bytes_per_row =
+            wgpu::util::align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        Self {
+            unpadded_bytes_per_row,
+            padded_bytes_per_row,
+        }
+    }
+}
+
+pub fn inspect_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    encoder: &mut wgpu::CommandEncoder,
+    path: impl AsRef<Path>,
+) -> ! {
+    let mut encoder = std::mem::replace(encoder, device.create_command_encoder(&Default::default()));
+
+    let padding = BufferPadding::new(texture.width());
+
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (padding.padded_bytes_per_row * texture.height() * texture.depth_or_array_layers()) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    // let rows_per_image = match (texture.dimension(), texture.depth_or_array_layers()){
+    //     (wgpu::TextureDimension::D2, ) => ,
+    //     _ => None
+    // };
+
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::ImageCopyBufferBase {
+            buffer: &buffer,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padding.padded_bytes_per_row),
+                rows_per_image: Some(texture.height()),
+            },
+        },
+        texture.size(),
+    );
+
+    queue.submit(Some(encoder.finish()));
+    
+    let slc = buffer.slice(..);
+
+    slc.map_async(wgpu::MapMode::Read, |_| {});
+
+    device.poll(wgpu::Maintain::Wait);
+
+    let mut data = Vec::with_capacity((texture.width() * texture.height() * texture.depth_or_array_layers() * 4) as _);
+    for padded in slc.get_mapped_range().chunks(padding.unpadded_bytes_per_row as usize){
+        data.extend_from_slice(&padded[..padding.unpadded_bytes_per_row as usize]);
+    }
+
+    let mut size_name = path.as_ref().to_path_buf();
+    let mut name = path.as_ref().file_name().unwrap().to_string_lossy().to_string();
+    name.push_str("_size");
+    size_name.set_file_name(name);
+    size_name.set_extension("txt");
+    
+    std::fs::write(path, data).unwrap();
+    std::fs::write(size_name, format!("{}, {}, {}", texture.depth_or_array_layers(), texture.height(), texture.width())).unwrap();
+    
+    panic!("Inspected texture")
+}
 
 /// Convenience function to read a Pod type from a mappable buffer.
 pub fn read_buffer<T: bytemuck::Pod>(
