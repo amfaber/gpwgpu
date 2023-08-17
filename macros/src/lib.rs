@@ -118,11 +118,11 @@ fn internal_parse_shaders(
     if is_static {
         let expr_array = unpack!(read_directory_parser(&dir, false, &prefix));
         let hashmap = quote!(
-            #vis static #processor: #prefix::Lazy<#pp_ty> = #prefix::Lazy::new(|| #pp_ty(
+            #vis static #processor: #prefix::Lazy<#pp_ty> = #prefix::Lazy::new(|| #pp_ty::from_parsed_shader_hashmap(
                 std::collections::HashMap::<
                 std::borrow::Cow<str>, #prefix::shaderpreprocessor::ParsedShader,
                 >::from(#expr_array)
-            ));
+            ).unwrap());
         );
         hashmap.into()
     } else {
@@ -149,111 +149,3 @@ pub fn parse_shaders_dyn(input: TokenStream) -> TokenStream {
     internal_parse_shaders(input, quote!(gpwgpu), false)
 }
 
-// #[proc_macro_attribute]
-// pub fn logical_buffers(_attr: TokenStream, input: TokenStream) -> TokenStream {
-//     let mut out = quote!(#[derive(Hash, Eq, PartialEq, Clone, Debug, Copy)]);
-//     let mut e: ItemEnum = syn::parse(input.clone()).unwrap();
-//     // let out = quote!();
-//     let bufimpl = impl_buffers(&mut e);
-//     out.extend(e.to_token_stream());
-//     out.extend(bufimpl);
-//     out.into()
-// }
-
-// fn impl_buffers(ast: &mut ItemEnum) -> proc_macro2::TokenStream {
-//     let name = &ast.ident;
-    
-//     let mut sizes = quote!();
-    
-//     let mut usages = quote!();
-    
-//     let mut reqs = quote!();
-
-    
-//     for variant in ast.variants.iter_mut(){
-//         let variant_name = &variant.ident;
-//         let BufAttribute { size, usage, req } = parse_attributes(&mut variant.attrs);
-        
-//         sizes.extend(quote!(#name::#variant_name => #size,));
-//         usages.extend(quote!(#name::#variant_name => #usage,));
-//         reqs.extend(quote!(#name::#variant_name => #req,));
-//     }
-
-//     quote! {
-//         impl gpwgpu::automatic_buffers::LogicalBuffers for #name {
-//             fn size(&self) -> wgpu::BufferAddress{
-//                 match self {
-//                     #sizes
-//                 }
-//             }
-            
-//             fn usage(&self) -> wgpu::BufferUsages{
-//                 match self {
-//                     #usages
-//                 }
-//             }
-            
-//             fn memory_req(&self) -> gpwgpu::automatic_buffers::MemoryReq {
-//                 match self {
-//                     #reqs
-//                 }
-//             }
-//         }
-//     }
-// }
-
-// fn parse_attributes(attrs: &mut Vec<Attribute>) -> BufAttribute {
-
-//     let msg = "Every buffer must have the #[buf(size = {int}, usages = {wgpu::BufferUsages}, req = {gpwgpu::automatic_buffers::MemoryReq})] attribute";
-
-//     let Some(idx) = attrs.iter().position(|x| x.path().is_ident("buf")) else {panic!("{}", msg)};
-//     let Attribute {
-//         meta : Meta::List(MetaList {
-//             tokens,
-//             ..
-//         }),
-//         .. 
-//     } = attrs.remove(idx) else {panic!("{}", msg)};
-
-    
-//     syn::parse2(tokens.clone()).unwrap()
-// }
-
-// struct BufAttribute {
-//     size: u64,
-//     usage: syn::Expr,
-//     req: syn::Expr,
-// }
-
-// impl syn::parse::Parse for BufAttribute {
-//     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-//         let mut size: Option<wgpu::BufferAddress> = None;
-//         let mut usage: Option<Expr> = None;
-//         let mut req: Option<Expr> = None;
-
-//         while !input.is_empty() {
-//             let key: syn::Ident = input.parse()?;
-//             input.parse::<syn::Token![=]>()?;
-//             if key == "size" {
-//                 let lit: syn::LitInt = input.parse()?;
-//                 size = Some(lit.base10_parse()?);
-//             } else if key == "usages" {
-//                 let expr: syn::Expr = input.parse()?;
-//                 usage = Some(expr);
-//             } else if key == "req" {
-//                 let expr: syn::Expr = input.parse()?;
-//                 req = Some(expr);
-//             } else {
-//                 return Err(input.error("Expected 'size', 'usages', or 'req'"));
-//             }
-
-//             // Allow comma-separated attributes
-//             let _ = input.parse::<syn::Token![,]>();
-//         }
-//         Ok(BufAttribute {
-//             size: size.ok_or(input.error("size not supplied"))?,
-//             usage: usage.ok_or(input.error("usages not supplied"))?,
-//             req: req.ok_or(input.error("req not supplied"))?,
-//         })
-//     }
-// }
