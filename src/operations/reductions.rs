@@ -1,5 +1,6 @@
 use crate::shaderpreprocessor::*;
 use crate::utils::*;
+use bytemuck::bytes_of;
 use my_core::parser::Definition;
 use my_core::parser::ExpansionError;
 
@@ -32,7 +33,7 @@ pub struct Reduce {
     inplace_pass: FullComputePass,
 
     last_reduction: FullComputePass,
-    size: usize,
+    // size: usize,
     workgroup_size: WorkgroupSize,
     unroll: u32,
     last_size: u32,
@@ -45,7 +46,7 @@ impl Reduce {
         // FIXME annotate size of this buffer. Perhaps even check and fail if not sufficient
         temp: Option<&wgpu::Buffer>,
         output: &wgpu::Buffer,
-        size: usize,
+        // size: usize,
         ty: ReductionType,
         nanprotection: bool,
         // Each thread adds this many numbers at a time
@@ -145,7 +146,7 @@ impl Reduce {
             inplace_pass,
 
             last_reduction,
-            size,
+            // size,
 
             workgroup_size,
 
@@ -174,9 +175,10 @@ impl Reduce {
     pub fn execute(
         &self,
         encoder: &mut Encoder,
+        mut length: u32,
         last_reduction_additional_pushconstants: &[u8],
     ) {
-        let mut length = self.size as u32;
+        // let mut length = self.size as u32;
 
         if let Some(outplace_pass) = &self.outplace_pass {
             self.internal_execute(encoder, outplace_pass, &mut length)
@@ -205,7 +207,7 @@ impl MeanReduce {
         temp: Option<&wgpu::Buffer>,
         divisor: Option<&wgpu::Buffer>,
         output: &wgpu::Buffer,
-        size: usize,
+        // size: usize,
         unroll: u32,
         specs: ShaderSpecs<'_>,
         last_size: u32,
@@ -218,11 +220,11 @@ var<storage, read> mean_divisor: u32;"
             None => "".to_string(),
         };
 
-        let extra_push = "".to_string();
+        let extra_push = "length: u32,".to_string();
 
         let extra_last = match divisor {
             Some(_) => "acc /= f32(mean_divisor);".to_string(),
-            None => format!("acc /= {}.0;", size),
+            None => "acc /= f32(pc.length);".to_string(),
         };
 
         let last_buffers = divisor;
@@ -234,7 +236,7 @@ var<storage, read> mean_divisor: u32;"
             input,
             temp,
             output,
-            size,
+            // size,
             ReductionType::Sum,
             nanprotection,
             unroll,
@@ -250,8 +252,9 @@ var<storage, read> mean_divisor: u32;"
         Ok(Self { reduction })
     }
 
-    pub fn execute(&self, encoder: &mut Encoder) {
-        self.reduction.execute(encoder, &[]);
+    pub fn execute(&self, encoder: &mut Encoder, length: u32) {
+        let push = bytes_of(&length);
+        self.reduction.execute(encoder, length, push);
     }
 }
 
@@ -269,7 +272,7 @@ impl StandardDeviationReduce {
         temp: &wgpu::Buffer,
         divisor: Option<&wgpu::Buffer>,
         output: &wgpu::Buffer,
-        size: usize,
+        // size: usize,
         unroll: u32,
         specs: ShaderSpecs<'_>,
         last_size: u32,
@@ -281,7 +284,7 @@ impl StandardDeviationReduce {
                 Some(temp),
                 divisor,
                 output,
-                size,
+                // size,
                 unroll,
                 specs.clone(),
                 last_size,
@@ -291,10 +294,10 @@ impl StandardDeviationReduce {
         let square_residuals = {
             let wg_size = specs.workgroup_size.clone();
             let specs = ShaderSpecs::new(wg_size)
-                .direct_dispatcher(&[size as u32, 1, 1])
+                // .direct_dispatcher(&[size as u32, 1, 1])
                 .extend_defs([
                     ("NANPROTECT", Definition::Bool(divisor.is_some())),
-                    ("TOTALELEMENTS", Definition::UInt(size as u32)),
+                    // ("TOTALELEMENTS", Definition::UInt(size as u32)),
                 ]);
             let shader = PREPROCESSOR
                 .process_by_name("square_residuals", specs)?
@@ -312,11 +315,11 @@ var<storage, read> mean_divisor: u32;"
                 None => "".to_string(),
             };
 
-            let extra_push = "".to_string();
+            let extra_push = "length: u32,".to_string();
 
             let extra_last = match divisor {
                 Some(_) => "acc /= f32(mean_divisor - 1u); acc = sqrt(acc);".to_string(),
-                None => format!("acc /= f32({}u - 1u); acc = sqrt(acc);", size),
+                None => "acc /= f32(pc.length - 1u); acc = sqrt(acc);".to_string(),
             };
 
             let last_buffers = divisor;
@@ -328,7 +331,7 @@ var<storage, read> mean_divisor: u32;"
                 temp,
                 None,
                 output,
-                size,
+                // size,
                 ReductionType::Sum,
                 nanprotection,
                 unroll,
@@ -349,9 +352,10 @@ var<storage, read> mean_divisor: u32;"
         })
     }
 
-    pub fn execute(&self, encoder: &mut Encoder) {
-        self.mean.execute(encoder);
-        self.square_residuals.execute(encoder, &[]);
-        self.mean_and_sqrt.execute(encoder, &[]);
+    pub fn execute(&self, encoder: &mut Encoder, length: u32) {
+        self.mean.execute(encoder, length);
+        let push = bytemuck::bytes_of(&length);
+        self.square_residuals.execute(encoder, push);
+        self.mean_and_sqrt.execute(encoder, length, push);
     }
 }

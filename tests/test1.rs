@@ -21,7 +21,7 @@ use gpwgpu::{
     },
 };
 use macros::*;
-use ndarray::{Array, Array3, Axis};
+use ndarray::{Array, Array3, Axis, Dim};
 use pollster::FutureExt;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -649,3 +649,49 @@ fn encoder_vs_pass() {
     let data = read_buffer::<f32>(&device, &readable, 0, None);
     dbg!(&data[..10]);
 }
+
+
+#[test]
+fn dim_test(){
+    let idk = Dim([0; 2]) - Dim([1; 2]);
+    dbg!(idk);
+}
+
+// #[test]
+// fn simd_copy(){
+//     let total = 100_000_000;
+//     let idk = vec![5.; total];
+//     // let mut target = Vec::with_capacity(total);
+
+//     let now = std::time::Instant::now();
+//     // target.extend_from_slice(&idk);
+//     let target = idk.into_iter().sum::<f32>();
+//     dbg!(now.elapsed());
+//     std::hint::black_box(target);
+
+//     const N: usize = 16;
+
+//     let idk_simd = vec![Simd::from([5f32; N]); total/N];
+//     // let mut target = Vec::with_capacity(total / N);
+    
+//     let now = std::time::Instant::now();
+//     // target.extend_from_slice(&idk_simd);
+//     let target = idk_simd.into_iter().sum::<Simd<f32, N>>();
+//     dbg!(now.elapsed());
+//     std::hint::black_box(target);
+// }
+
+// #[test]
+// fn get_available_mem(){
+//     let instance = wgpu::Instance::default();
+//     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions{
+//         power_preference: wgpu::PowerPreference::HighPerformance,
+//         ..Default::default()
+//     }).block_on().unwrap();
+
+//     dbg!(adapter.limits());
+//     // for adapter in instance.enumerate_adapters(wgpu::Backends::all()){
+//     //     // drop(adapter)
+//     //     // dbg!(adapter.get_info());
+//     // }
+// }

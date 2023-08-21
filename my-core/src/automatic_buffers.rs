@@ -329,13 +329,14 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
     }
 }
 
-type SetUpReturn<P, B, E> =
-    Result<Box<dyn SequentialOperation<Params = P, BufferEnum = B, Error = E>>, E>;
+type SetUpReturn<P, B, E, A> =
+    Result<Box<dyn SequentialOperation<Params = P, BufferEnum = B, Error = E, Args = A>>, E>;
 
 pub trait SequentialOperation: 'static + Debug + Any {
     type Params;
     type BufferEnum: 'static + Hash + Eq + Clone + Copy + Debug;
     type Error;
+    type Args;
 
     fn enabled(params: &Self::Params) -> bool
     where
@@ -353,13 +354,13 @@ pub trait SequentialOperation: 'static + Debug + Any {
     where
         Self: Sized;
 
-    fn execute(&mut self, encoder: &mut Encoder, buffers: &BufferSolution<Self::BufferEnum>);
+    fn execute(&mut self, encoder: &mut Encoder, buffers: &BufferSolution<Self::BufferEnum>, args: &Self::Args);
 
     fn set_up(
         device: &wgpu::Device,
         params: &Self::Params,
         buffers: &BufferSolution<Self::BufferEnum>,
-    ) -> SetUpReturn<Self::Params, Self::BufferEnum, Self::Error>
+    ) -> SetUpReturn<Self::Params, Self::BufferEnum, Self::Error, Self::Args>
     where
         Self: Sized,
     {
@@ -398,18 +399,18 @@ fn set_up_callback<T: SequentialOperation>() -> Box<
         &wgpu::Device,
         &T::Params,
         &BufferSolution<T::BufferEnum>,
-    ) -> SetUpReturn<T::Params, T::BufferEnum, T::Error>,
+    ) -> SetUpReturn<T::Params, T::BufferEnum, T::Error, T::Args>,
 > {
     Box::new(T::set_up)
 }
 
-pub struct Operation<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E>(
+pub struct Operation<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E, A>(
     Box<dyn Fn(&P) -> bool>,
     Box<dyn Fn(&P) -> (TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
-    Box<dyn Fn(&wgpu::Device, &P, &BufferSolution<B>) -> SetUpReturn<P, B, E>>,
+    Box<dyn Fn(&wgpu::Device, &P, &BufferSolution<B>) -> SetUpReturn<P, B, E, A>>,
 );
 
-pub fn register<T: SequentialOperation>() -> Operation<T::Params, T::BufferEnum, T::Error> {
+pub fn register<T: SequentialOperation>() -> Operation<T::Params, T::BufferEnum, T::Error, T::Args> {
     Operation(
         enabled_callback::<T>(),
         buffers_callback::<T>(),
@@ -417,19 +418,19 @@ pub fn register<T: SequentialOperation>() -> Operation<T::Params, T::BufferEnum,
     )
 }
 
-pub struct AllOperations<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E> {
+pub struct AllOperations<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E, A> {
     pub buffers: BufferSolution<B>,
 
     // Cell to allow each operation to mutate their own state while having outstanding refs to
     // buffers owned by self.
-    pub operations: Cell<Vec<Box<dyn SequentialOperation<Params = P, BufferEnum = B, Error = E>>>>,
+    pub operations: Cell<Vec<Box<dyn SequentialOperation<Params = P, BufferEnum = B, Error = E, Args = A>>>>,
 }
 
-impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static> AllOperations<P, B, E> {
+impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: 'static> AllOperations<P, B, E, A> {
     pub fn new(
         device: &wgpu::Device,
         params: &P,
-        operations: Vec<Operation<P, B, E>>,
+        operations: Vec<Operation<P, B, E, A>>,
     ) -> Result<Self, E> {
         Self::new_internal(device, params, operations, false)
     }
@@ -437,7 +438,7 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static> AllO
     pub fn new_dbg(
         device: &wgpu::Device,
         params: &P,
-        operations: Vec<Operation<P, B, E>>,
+        operations: Vec<Operation<P, B, E, A>>,
     ) -> Result<Self, E> {
         Self::new_internal(device, params, operations, true)
     }
@@ -445,7 +446,7 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static> AllO
     fn new_internal(
         device: &wgpu::Device,
         params: &P,
-        operations: Vec<Operation<P, B, E>>,
+        operations: Vec<Operation<P, B, E, A>>,
         dbg: bool,
     ) -> Result<Self, E> {
         let mut all_buffers = Vec::new();
@@ -475,21 +476,21 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static> AllO
             operations,
         })
     }
-    pub fn execute(&self, encoder: &mut Encoder) {
+    pub fn execute(&self, encoder: &mut Encoder, args: &A) {
         let mut operations = self.operations.take();
         for operation in operations.iter_mut() {
-            operation.execute(encoder, &self.buffers);
+            operation.execute(encoder, &self.buffers, args);
         }
         self.operations.set(operations);
     }
 
-    pub fn execute_with_inspect<'a, T: 'static>(&'a self, encoder: &'a mut Encoder<'a>) {
+    pub fn execute_with_inspect<'a, T: 'static>(&'a self, encoder: &'a mut Encoder<'a>, args: &A) {
         let mut operations = self.operations.take();
         let mut type_found = false;
         let mut type_names = Vec::new();
         encoder.activate();
         for operation in operations.iter_mut() {
-            operation.execute(encoder, &self.buffers);
+            operation.execute(encoder, &self.buffers, args);
             let (id, name) = operation.my_type_id();
             if id == std::any::TypeId::of::<T>() {
                 type_found = true;

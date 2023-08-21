@@ -7,11 +7,15 @@ var<storage, read_write> output: array<f32>;
 @group(0) @binding(2)
 var<uniform> mean: f32;
 
-// var<push_constant> pc: PushConstants;
+struct PushConstants{
+    total_elements: u32,
+}
+
+var<push_constant> pc: PushConstants;
 
 @compute @workgroup_size(#WG_X, #WG_Y, #WG_Z)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
-    if (global_id.x >= #TOTALELEMENTS) {
+    if (global_id.x >= pc.total_elements) {
         return;
     }
 

@@ -38,7 +38,7 @@ pub struct SeparableConvolution<const N: usize>{
     pub input_pass: FullComputePass,
     pub temp_pass: [FullComputePass; 2],
     pub last_pass: FullComputePass,
-    pub dims: [i32; N],
+    // pub dims: [i32; N],
 }
 
 impl<const N: usize> SeparableConvolution<N>{
@@ -47,7 +47,7 @@ impl<const N: usize> SeparableConvolution<N>{
         first_pipeline: Rc<NonBoundPipeline>,
         pipeline: Rc<NonBoundPipeline>,
         last_pipeline: Rc<NonBoundPipeline>,
-        dims: [i32; N],
+        // dims: [i32; N],
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
         output: &wgpu::Buffer,
@@ -106,7 +106,7 @@ impl<const N: usize> SeparableConvolution<N>{
         Self{
             input_pass,
             temp_pass: temp_passes,
-            dims,
+            // dims,
             last_pass,
         }
     }
@@ -114,7 +114,7 @@ impl<const N: usize> SeparableConvolution<N>{
     pub fn from_pipeline<'buf, 'proc>(
         device: &wgpu::Device,
         pipeline: Rc<NonBoundPipeline>,
-        dims: [i32; N],
+        // dims: [i32; N],
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
         output: &wgpu::Buffer,
@@ -125,7 +125,7 @@ impl<const N: usize> SeparableConvolution<N>{
             Rc::clone(&pipeline),
             Rc::clone(&pipeline),
             pipeline,
-            dims,
+            // dims,
             input,
             temp,
             output,
@@ -138,17 +138,19 @@ impl<const N: usize> SeparableConvolution<N>{
     pub fn execute(
         &self,
         encoder: &mut Encoder,
+        dims: [i32; N],
         extra_push_constants: &[u8],
     ){
-        self.execute_many_push(encoder, [extra_push_constants; N])
+        self.execute_many_push(encoder, dims, [extra_push_constants; N])
     }
 
     pub fn execute_many_push(
         &self,
         encoder: &mut Encoder,
+        mut dims: [i32; N],
         extra_push_constants: [impl Deref<Target = [u8]>; N],
     ){
-        let mut dims = self.dims.clone();
+        // let mut dims = dims;
         let mut push = bytemuck::cast_slice(&dims).to_vec();
         push.extend_from_slice(extra_push_constants[0].deref());
 
@@ -208,7 +210,7 @@ impl<const N: usize> GaussianSmoothing<N> {
     
     pub fn from_pipeline(
         device: &wgpu::Device,
-        dims: [i32; N],
+        // dims: [i32; N],
         pipeline: Rc<NonBoundPipeline>,
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
@@ -217,7 +219,7 @@ impl<const N: usize> GaussianSmoothing<N> {
         let pass = SeparableConvolution::from_pipeline(
             device,
             pipeline,
-            dims,
+            // dims,
             input,
             temp,
             output,
@@ -242,7 +244,7 @@ impl<const N: usize> GaussianSmoothing<N> {
         let pass = SeparableConvolution::from_pipeline(
             device,
             pipeline,
-            dims,
+            // dims,
             input,
             temp,
             output,
@@ -254,10 +256,11 @@ impl<const N: usize> GaussianSmoothing<N> {
     pub fn execute(
         &self,
         encoder: &mut Encoder,
+        dims: [i32; N],
         sigma: [f32; N],
     ){
         let push = sigma.iter().map(|s| unsafe{ any_as_u8_slice(s) }).collect::<Vec<_>>();
-        self.0.execute_many_push(encoder, push.try_into().unwrap());
+        self.0.execute_many_push(encoder, dims, push.try_into().unwrap());
     }
 }
 
@@ -331,7 +334,7 @@ var<storage, read_write> final_output: array<f32>;";
     
     pub fn from_pipeline(
         device: &wgpu::Device,
-        dims: [i32; N],
+        // dims: [i32; N],
         pipeline: Rc<NonBoundPipeline>,
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
@@ -341,7 +344,7 @@ var<storage, read_write> final_output: array<f32>;";
         let pass = SeparableConvolution::from_pipeline(
             device,
             pipeline,
-            dims,
+            // dims,
             input,
             temp,
             temp2,
@@ -365,7 +368,7 @@ var<storage, read_write> final_output: array<f32>;";
         let pipeline = Self::pipeline(device, dims)?;
         Ok(Self::from_pipeline(
             device,
-            dims,
+            // dims,
             pipeline,
             input,
             temp,
@@ -377,6 +380,7 @@ var<storage, read_write> final_output: array<f32>;";
     pub fn execute(
         &self,
         encoder: &mut Encoder,
+        dims: [i32; N],
         sigma: [f32; N],
     ){
         encoder.clear_buffer(self.output, 0, None);
@@ -390,7 +394,7 @@ var<storage, read_write> final_output: array<f32>;";
             push[N - 1].last = 1;
             push[i].diff = 1;
             let push_u8 = push.iter().map(|x| unsafe{ any_as_u8_slice(x) }).collect::<Vec<_>>();
-            self.pass.execute_many_push(encoder, push_u8.try_into().unwrap());
+            self.pass.execute_many_push(encoder, dims, push_u8.try_into().unwrap());
         }
     }
 }
