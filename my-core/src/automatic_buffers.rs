@@ -34,10 +34,10 @@ pub struct AbstractBuffer<B: 'static + Hash + Eq + Clone + Copy + Debug> {
 }
 
 #[derive(Debug)]
-struct ConcreteBuffer<B: 'static + Hash + Eq + Clone + Copy + Debug> {
-    size: u64,
-    usage: wgpu::BufferUsages,
-    currently_backing: Option<(AbstractBuffer<B>, bool)>,
+pub struct ConcreteBuffer<B: 'static + Hash + Eq + Clone + Copy + Debug> {
+    pub size: u64,
+    pub usage: wgpu::BufferUsages,
+    pub currently_backing: Option<(AbstractBuffer<B>, bool)>,
 }
 
 impl<B: 'static + Hash + Eq + Clone + Copy + Debug> ConcreteBuffer<B> {
@@ -117,29 +117,30 @@ pub struct BufferSolution<B: 'static + Hash + Eq + Clone + Copy + Debug> {
     buffers: Vec<wgpu::Buffer>,
     assignments: HashMap<TypeId, MapAndTypeName<B>>,
     order: Vec<TypeId>,
+    pub planned_buffers: Vec<ConcreteBuffer<B>>,
 }
 
 impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
     pub fn new(
-        device: &wgpu::Device,
+        // device: &wgpu::Device,
         operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
     ) -> Self {
-        Self::new_internal(device, operations, wgpu::BufferUsages::empty())
+        Self::new_internal(operations, wgpu::BufferUsages::empty())
     }
 
     pub fn new_dbg(
-        device: &wgpu::Device,
+        // device: &wgpu::Device,
         operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
     ) -> Self {
         Self::new_internal(
-            device,
+            // device,
             operations,
             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         )
     }
 
     fn new_internal(
-        device: &wgpu::Device,
+        // device: &wgpu::Device,
         operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
         uses_for_all: wgpu::BufferUsages,
     ) -> Self {
@@ -210,17 +211,27 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
             );
         }
 
-        let buffers = all_buffers
-            .into_iter()
-            .enumerate()
-            .map(|(i, buf)| buf.to_wgpu_buffer(device, i))
-            .collect();
+        // let buffers = all_buffers
+        //     .into_iter()
+        //     .enumerate()
+        //     .map(|(i, buf)| buf.to_wgpu_buffer(device, i))
+        //     .collect();
 
         Self {
-            buffers,
+            buffers: Vec::new(),
             assignments,
             order,
+            planned_buffers: all_buffers,
         }
+    }
+
+    pub fn allocate(&mut self, device: &wgpu::Device) {
+        self.buffers = self
+            .planned_buffers
+            .iter()
+            .enumerate()
+            .map(|(i, buf)| buf.to_wgpu_buffer(device, i))
+            .collect()
     }
 
     pub fn try_position_get(&self, operation: usize, name: B) -> Option<&wgpu::Buffer> {
@@ -354,7 +365,12 @@ pub trait SequentialOperation: 'static + Debug + Any {
     where
         Self: Sized;
 
-    fn execute(&mut self, encoder: &mut Encoder, buffers: &BufferSolution<Self::BufferEnum>, args: &Self::Args);
+    fn execute(
+        &mut self,
+        encoder: &mut Encoder,
+        buffers: &BufferSolution<Self::BufferEnum>,
+        args: &Self::Args,
+    );
 
     fn set_up(
         device: &wgpu::Device,
@@ -410,7 +426,8 @@ pub struct Operation<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E, A>(
     Box<dyn Fn(&wgpu::Device, &P, &BufferSolution<B>) -> SetUpReturn<P, B, E, A>>,
 );
 
-pub fn register<T: SequentialOperation>() -> Operation<T::Params, T::BufferEnum, T::Error, T::Args> {
+pub fn register<T: SequentialOperation>() -> Operation<T::Params, T::BufferEnum, T::Error, T::Args>
+{
     Operation(
         enabled_callback::<T>(),
         buffers_callback::<T>(),
@@ -423,59 +440,76 @@ pub struct AllOperations<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E, A>
 
     // Cell to allow each operation to mutate their own state while having outstanding refs to
     // buffers owned by self.
-    pub operations: Cell<Vec<Box<dyn SequentialOperation<Params = P, BufferEnum = B, Error = E, Args = A>>>>,
+    pub operations:
+        Cell<Vec<Box<dyn SequentialOperation<Params = P, BufferEnum = B, Error = E, Args = A>>>>,
+
+    calls: Vec<Operation<P, B, E, A>>,
 }
 
-impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: 'static> AllOperations<P, B, E, A> {
+impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: 'static>
+    AllOperations<P, B, E, A>
+{
     pub fn new(
-        device: &wgpu::Device,
+        // device: &wgpu::Device,
         params: &P,
         operations: Vec<Operation<P, B, E, A>>,
     ) -> Result<Self, E> {
-        Self::new_internal(device, params, operations, false)
+        Self::new_internal(params, operations, false)
     }
 
     pub fn new_dbg(
-        device: &wgpu::Device,
+        // device: &wgpu::Device,
         params: &P,
         operations: Vec<Operation<P, B, E, A>>,
     ) -> Result<Self, E> {
-        Self::new_internal(device, params, operations, true)
+        Self::new_internal(params, operations, true)
     }
 
     fn new_internal(
-        device: &wgpu::Device,
         params: &P,
         operations: Vec<Operation<P, B, E, A>>,
         dbg: bool,
     ) -> Result<Self, E> {
         let mut all_buffers = Vec::new();
-        let mut set_up_callbacks = Vec::new();
-        for Operation(enabled, buffers, set_up) in operations {
-            if enabled(params) {
+        // let mut set_up_callbacks = Vec::new();
+        // for Operation(enabled, buffers, set_up) in operations {
+        //     if enabled(params) {
+        //         all_buffers.push(buffers(params));
+        //         set_up_callbacks.push(set_up);
+        //     }
+        // }
+        let ops = operations.into_iter().filter(|Operation(enabled, buffers, _set_up)|{
+            let enabled = enabled(params);
+            if enabled{
                 all_buffers.push(buffers(params));
-                set_up_callbacks.push(set_up);
             }
-        }
+            enabled
+        }).collect::<Vec<_>>();
 
         let buffers = if dbg {
-            BufferSolution::new_dbg(device, all_buffers)
+            BufferSolution::new_dbg(all_buffers)
         } else {
-            BufferSolution::new(device, all_buffers)
+            BufferSolution::new(all_buffers)
         };
-
-        let operations = set_up_callbacks
-            .into_iter()
-            .map(|set_up| set_up(device, params, &buffers))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let operations = Cell::new(operations);
 
         Ok(Self {
             buffers,
-            operations,
+            calls: ops,
+            operations: Cell::new(Vec::new()),
         })
     }
+
+    pub fn finalize(&mut self, device: &wgpu::Device, params: &P) -> Result<(), E>{
+        self.buffers.allocate(device);
+        let operations = self.calls
+            .iter()
+            .map(|Operation(_enabled, _buffers, set_up)| set_up(device, params, &self.buffers))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        self.operations.set(operations);
+        Ok(())
+    }
+    
     pub fn execute(&self, encoder: &mut Encoder, args: &A) {
         let mut operations = self.operations.take();
         for operation in operations.iter_mut() {
