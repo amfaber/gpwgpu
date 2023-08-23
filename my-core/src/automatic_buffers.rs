@@ -499,6 +499,22 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         })
     }
 
+    pub fn reinitialize(&mut self, params: &P, dbg: bool){
+        let mut all_buffers = Vec::new();
+        for Operation(enabled, buffers, _set_up) in self.calls.iter(){
+            let enabled = enabled(params);
+            if enabled{
+                all_buffers.push(buffers(params));
+            }
+        }
+        let buffers = if dbg {
+            BufferSolution::new_dbg(all_buffers)
+        } else {
+            BufferSolution::new(all_buffers)
+        };
+        self.buffers = buffers;
+    }
+
     pub fn finalize(&mut self, device: &wgpu::Device, params: &P) -> Result<(), E>{
         self.buffers.allocate(device);
         let operations = self.calls

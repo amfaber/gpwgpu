@@ -261,7 +261,7 @@ var<storage, read> mean_divisor: u32;"
 #[derive(Debug)]
 pub struct StandardDeviationReduce {
     mean: MeanReduce,
-    square_residuals: FullComputePass,
+    square_residuals: (FullComputePass, WorkgroupSize),
     mean_and_sqrt: Reduce,
 }
 
@@ -293,7 +293,7 @@ impl StandardDeviationReduce {
 
         let square_residuals = {
             let wg_size = specs.workgroup_size.clone();
-            let specs = ShaderSpecs::new(wg_size)
+            let specs = ShaderSpecs::new(wg_size.clone())
                 // .direct_dispatcher(&[size as u32, 1, 1])
                 .extend_defs([
                     ("NANPROTECT", Definition::Bool(divisor.is_some())),
@@ -303,7 +303,7 @@ impl StandardDeviationReduce {
                 .process_by_name("square_residuals", specs)?
                 .build(device);
             let bindgroup = [(0, input), (1, temp), (2, output)];
-            FullComputePass::new(device, shader, &bindgroup)
+            (FullComputePass::new(device, shader, &bindgroup), wg_size)
         };
 
         let mean_and_sqrt = {
@@ -355,7 +355,8 @@ var<storage, read> mean_divisor: u32;"
     pub fn execute(&self, encoder: &mut Encoder, length: u32) {
         self.mean.execute(encoder, length);
         let push = bytemuck::bytes_of(&length);
-        self.square_residuals.execute(encoder, push);
+        let square_dispatcher = Dispatcher::new_direct(&[length, 1, 1], &self.square_residuals.1);
+        self.square_residuals.0.execute_with_dispatcher(encoder, push, &square_dispatcher);
         self.mean_and_sqrt.execute(encoder, length, push);
     }
 }

@@ -700,6 +700,7 @@ impl FullComputePass {
         }
     }
 
+    #[track_caller]
     pub fn execute(&self, encoder: &mut Encoder, push_constants: &[u8]) {
         self.execute_with_dispatcher(
             encoder,
