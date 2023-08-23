@@ -69,6 +69,20 @@ impl<'def> ShaderSpecs<'def> {
         self
     }
 
+    /// The function dispatches on a grid to ensure at least "len" invocations.
+    /// No guarantuees are made about the layout of the workgrid. Tries to minimize
+    /// invocations above "len". The shader should calculate its own flat index to
+    /// ensure consitency.
+    /// 
+    /// Useful for large dispatches that can't fit into a single dimension due to
+    /// hardware limits.
+    pub fn dispatcher_flat(mut self, len: u64) -> Self{
+        let wg_size = self.workgroup_size.x * self.workgroup_size.y * self.workgroup_size.z;
+        let n_workgroups = len as f64 / wg_size as f64;
+        
+        self
+    }
+
     pub fn direct_dispatcher(mut self, dims: &[u32; 3]) -> Self {
         self.dispatcher = Some(Dispatcher::new_direct(dims, &self.workgroup_size));
         self
