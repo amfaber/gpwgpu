@@ -17,20 +17,28 @@ var<storage, read_write> input: array<f32>;
 
 var<push_constant> pc: PushConstants;
 
+#import get_flat_idx
+
 @compute @workgroup_size(#WG_X, #WG_Y, #WG_Z)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
-    if (global_id.x >= pc.stride) {
+fn main(
+	@builtin(workgroup_id) wg_id: vec3<u32>,
+	@builtin(num_workgroups) wg_num: vec3<u32>,
+	@builtin(local_invocation_index) local_index: u32,
+){
+	let flat_idx = get_flat_idx(wg_id, wg_num, local_index);
+	var idx = flat_idx;
+    if (idx >= pc.stride) {
         return;
     }
 
-    var idx = global_id.x;
+    // var idx = global_id.x;
     let stride = pc.stride;
     
     var datum = input[idx];
     var acc = datum;
     
     #for I in 1..UNROLL-1{
-        idx = global_id.x + stride * u32(#I);
+        idx = flat_idx + stride * u32(#I);
         datum = input[idx];
         #if NANPROTECT{
             if (bitcast<u32>(datum) != 4294967295u){
@@ -41,7 +49,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
         }
     }
 
-    idx = global_id.x + stride * (#UNROLL - 1u);
+    idx = flat_idx + stride * (#UNROLL - 1u);
     datum = input[idx];
     
     if (idx < pc.length)
@@ -53,8 +61,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>){
     }
 
     #if OUTPLACE{
-        output[global_id.x] = acc;
+        output[flat_idx] = acc;
     } #else {
-        input[global_id.x] = acc;
+        input[flat_idx] = acc;
     }
 }

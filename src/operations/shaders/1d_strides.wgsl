@@ -15,12 +15,16 @@ var<push_constant> pc: PushConstants;
 
 // var<workgroup> local_storage: array<f32, #LOCALSIZE>;
 
+#import get_flat_idx
+
 @compute @workgroup_size(#WG_X, #WG_Y, #WG_Z)
 fn main(
-	@builtin(global_invocation_id) global_id: vec3<u32>,
+	@builtin(workgroup_id) wg_id: vec3<u32>,
+	@builtin(num_workgroups) wg_num: vec3<u32>,
 	@builtin(local_invocation_index) local_index: u32,
 ) {
-
+	let flat_idx = i32(get_flat_idx(wg_id, wg_num, local_index));
+	var idx = flat_idx;
 	var coords: array<i32, #N>;
 
 	var strides: array<i32, #N>;
@@ -34,11 +38,11 @@ fn main(
 	
 	}
 	
-	if global_id.x >= u32(next_stride){
+	if idx >= next_stride{
 		return;
 	}
 	
-	var idx = i32(global_id.x);
+	// var idx = i32(global_id.x);
 
 	#for I in 0..N{
 		coords[#I] = idx / strides[#I];
@@ -46,7 +50,7 @@ fn main(
 
 	}
 
-	idx = i32(global_id.x);
+	idx = flat_idx;
 	
 	var acc = 0.0;
 	var kernel_eval = 0.0;

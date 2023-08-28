@@ -1,3 +1,4 @@
+// #![cfg_attr(feature = "nightly", feature(portable_simd))]
 #![allow(unused_imports)]
 use std::{
     collections::HashMap,
@@ -65,7 +66,7 @@ fn standard_deviation() {
             &temp,
             None,
             &output,
-            n,
+            // n,
             2,
             specs.clone(),
             8,
@@ -73,7 +74,7 @@ fn standard_deviation() {
         .unwrap();
 
         let mut encoder = Encoder::new(&device);
-        std.execute(&mut encoder);
+        std.execute(&mut encoder, n as _);
         queue.submit(Some(encoder.finish()));
         device.poll(wgpu::MaintainBase::Wait);
         let result: f32 = read_buffer(&device, &output, 0, None)[0];
@@ -140,7 +141,7 @@ fn max() {
             &inp,
             Some(&temp),
             &output,
-            (2 * n) as _,
+            // (2 * n) as _,
             ty,
             false,
             8,
@@ -157,7 +158,7 @@ fn max() {
         // let mut encoder = device.create_command_encoder(&Default::default());
         let mut encoder = Encoder::new(&device);
 
-        reduction.execute(&mut encoder, &[]);
+        reduction.execute(&mut encoder, 2 * n as u32, &[]);
 
         queue.submit(Some(encoder.finish()));
         device.poll(wgpu::MaintainBase::Wait);
@@ -226,7 +227,7 @@ fn gaussian_smoothing_2d() {
         save_path: "tests/dumps".into(),
         create_py: false,
     });
-    smoothing.execute(&mut encoder, [5.0; 2]);
+    smoothing.execute(&mut encoder, shape, [5.0; 2]);
     encoder.inspect_buffers().unwrap();
 }
 
@@ -341,7 +342,7 @@ fn smoothing_3d() {
     if false {
         let smoothing =
             GaussianSmoothing::new(&device, shape, &bufs.inp, &bufs.temp, &bufs.out).unwrap();
-        smoothing.execute(&mut encoder, [5.0, 5.0, 2.0]);
+        smoothing.execute(&mut encoder, shape, [5.0, 5.0, 2.0]);
     } else {
         let laplace = GaussianLaplace::new(
             &device,
@@ -352,7 +353,7 @@ fn smoothing_3d() {
             &bufs.out,
         )
         .unwrap();
-        laplace.execute(&mut encoder, [4.0, 4.0, 4.0]);
+        laplace.execute(&mut encoder, shape, [4.0, 4.0, 4.0]);
     }
 
     encoder.copy_buffer_to_buffer(&bufs.out, 0, &bufs.readable, 0, bufs.inp.size());
@@ -443,7 +444,7 @@ fn laplace() {
         save_path: "tests/dumps".into(),
         create_py: false,
     });
-    laplace.execute(&mut encoder, [5.0; 2]);
+    laplace.execute(&mut encoder, shape, [5.0; 2]);
     encoder.inspect_buffers().unwrap();
 }
 
@@ -657,6 +658,7 @@ fn dim_test(){
     dbg!(idk);
 }
 
+// use std::simd::Simd;
 // #[test]
 // fn simd_copy(){
 //     let total = 100_000_000;
@@ -669,7 +671,7 @@ fn dim_test(){
 //     dbg!(now.elapsed());
 //     std::hint::black_box(target);
 
-//     const N: usize = 16;
+//     const N: usize = 2;
 
 //     let idk_simd = vec![Simd::from([5f32; N]); total/N];
 //     // let mut target = Vec::with_capacity(total / N);
@@ -695,3 +697,44 @@ fn dim_test(){
 //     //     // dbg!(adapter.get_info());
 //     // }
 // }
+
+#[test]
+fn primes_time_test(){
+    use slow_primes::Primes;
+
+    let gb_size = 2.50031231;
+    let n_wg = gb_size * (1 << 30) as f64 / 4. / 256.;
+    
+    let now = std::time::Instant::now();
+    let primes = Primes::sieve((n_wg.sqrt() * 1.1) as usize);
+
+    
+    let mut running = [1, 1, 1];
+    let mut keep_going = true;
+    let mut offset = 0;
+    while keep_going{
+        let factors = primes.factor(n_wg as usize + offset).unwrap();
+        dbg!(&factors);
+        let mut idx = 0;
+        let mut iter = factors.into_iter();
+        keep_going = loop{
+            let Some((base, exp)) = iter.next() else { break false };
+            if base > (1<<16){
+                offset += 1;
+                break true
+            }
+            for _ in 0..exp{
+                if running[idx] * base < (1<<16){
+                    running[idx] *= base;
+                } else {
+                    idx += 1;
+                    running[idx] *= base;
+                }
+            }
+        }
+    }
+    dbg!(now.elapsed());
+    dbg!(running);
+    dbg!(offset);
+    // dbg!(factors);
+}

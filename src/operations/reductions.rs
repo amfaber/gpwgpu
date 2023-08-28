@@ -163,7 +163,8 @@ impl Reduce {
         length: &mut u32,
     ) {
         let to_start = (*length + self.unroll - 1) / self.unroll;
-        let dispatcher = Dispatcher::new_direct(&[to_start, 1, 1], &self.workgroup_size);
+        let flat_dispatcher = dispatcher_flat(to_start as u64, self.workgroup_size.clone());
+        let dispatcher = Dispatcher::Direct(flat_dispatcher);
         pass.execute_with_dispatcher(
             encoder,
             bytemuck::bytes_of(&[to_start, *length]),
@@ -355,7 +356,8 @@ var<storage, read> mean_divisor: u32;"
     pub fn execute(&self, encoder: &mut Encoder, length: u32) {
         self.mean.execute(encoder, length);
         let push = bytemuck::bytes_of(&length);
-        let square_dispatcher = Dispatcher::new_direct(&[length, 1, 1], &self.square_residuals.1);
+        let dispatcher = dispatcher_flat(length as _, self.square_residuals.1.clone());
+        let square_dispatcher = Dispatcher::Direct(dispatcher);
         self.square_residuals.0.execute_with_dispatcher(encoder, push, &square_dispatcher);
         self.mean_and_sqrt.execute(encoder, length, push);
     }

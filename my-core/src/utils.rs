@@ -14,6 +14,47 @@ use wgpu::{self, util::DeviceExt, CommandEncoder, MAP_ALIGNMENT, RequestAdapterO
 
 use crate::shaderpreprocessor::NonBoundPipeline;
 
+/// For dispatching on a grid to ensure at least "len" invocations.
+/// No guarantuees are made about the layout of the workgrid. Tries to minimize
+/// invocations above "len". The shader should calculate its own flat index to
+/// ensure consitency.
+/// 
+/// Useful for large dispatches that can't fit into a single dimension due to
+/// hardware limits.
+pub fn dispatcher_flat(len: u64, wg_size: WorkgroupSize) -> [u32; 3]{
+    let wg_size = wg_size.x * wg_size.y * wg_size.z;
+    let n_workgroups = len as f64 / wg_size as f64;
+    let exact_workgroups = (len as usize + wg_size as usize - 1) / wg_size as usize;
+    if exact_workgroups < (1 << 16){
+        return [exact_workgroups as u32, 1, 1]
+    }
+    let primes = slow_primes::Primes::sieve((n_workgroups.sqrt() * 1.1) as usize);
+    let mut work_group = [1, 1, 1];
+    let mut keep_going = true;
+    let mut offset = 0;
+    while keep_going{
+        let factors = primes.factor(exact_workgroups + offset).unwrap();
+        let mut idx = 0;
+        let mut iter = factors.into_iter();
+        keep_going = loop{
+            let Some((base, exp)) = iter.next() else { break false };
+            if base > (1<<16){
+                offset += 1;
+                break true
+            }
+            for _ in 0..exp{
+                if work_group[idx] * base < (1<<16){
+                    work_group[idx] *= base;
+                } else {
+                    idx += 1;
+                    work_group[idx] *= base;
+                }
+            }
+        }
+    }
+    work_group.map(|x| x as u32)
+}
+
 pub enum AccTime{
     Disabled,
     Enabled{
