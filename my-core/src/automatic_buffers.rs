@@ -240,9 +240,12 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
         Some(&self.buffers[idx])
     }
 
+    #[track_caller]
     pub fn position_get(&self, operation: usize, name: B) -> &wgpu::Buffer {
-        self.try_position_get(operation, name)
-            .unwrap_or_else(|| panic!("{:?} not found in \n{:?}\n", name, self))
+        match self.try_position_get(operation, name){
+            Some(val) => val,
+            None => panic!("{:?} not found in \n{:#?}\n", name, self)
+        }
     }
 
     pub fn try_get_size<T: Any>(&self, name: B) -> Option<wgpu::BufferAddress> {
@@ -252,15 +255,17 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
         Some(abs.size)
     }
 
+    #[track_caller]
     pub fn get_size<T: Any>(&self, name: B) -> wgpu::BufferAddress {
-        self.try_get_size::<T>(name).unwrap_or_else(|| {
-            panic!(
+        match self.try_get_size::<T>(name){
+            Some(val) => val,
+            None => panic!(
                 "{:?} in pass {:?} not found in \n{:#?}\n",
                 name,
                 any::type_name::<T>(),
                 self
             )
-        })
+        }
     }
 
     pub fn try_get<T: Any>(&self, name: B) -> Option<&wgpu::Buffer> {
@@ -270,25 +275,29 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
         Some(&self.buffers[idx])
     }
 
+    #[track_caller]
     pub fn get<T: Any>(&self, name: B) -> &wgpu::Buffer {
-        self.try_get::<T>(name).unwrap_or_else(|| {
-            panic!(
+        match self.try_get::<T>(name){
+            Some(val) => val,
+            None => panic!(
                 "{:?} in pass {:?} not found in \n{:#?}\n",
                 name,
                 any::type_name::<T>(),
                 self
             )
-        })
+        }
     }
 
+    #[track_caller]
     pub fn get_bindgroup<T: Any>(&self) -> HashMap<B, &wgpu::Buffer> {
-        self.try_get_bindgroup::<T>().unwrap_or_else(|| {
-            panic!(
+        match self.try_get_bindgroup::<T>(){
+            Some(val) => val,
+            None => panic!(
                 "Pass {:?} not found in \n{:#?}\n",
                 any::type_name::<T>(),
                 self
             )
-        })
+        }
     }
 
     pub fn try_get_bindgroup<T: Any>(&self) -> Option<HashMap<B, &wgpu::Buffer>> {
@@ -302,14 +311,16 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
         )
     }
 
+    #[track_caller]
     pub fn get_inspect_buffers<T: Any>(&self) -> Vec<InspectBuffer> {
-        self.try_get_inspect_buffers::<T>().unwrap_or_else(|| {
-            panic!(
+        match self.try_get_inspect_buffers::<T>(){
+            Some(val) => val,
+            None => panic!(
                 "Pass {:?} not found in \n{:#?}\n",
                 any::type_name::<T>(),
                 self
             )
-        })
+        }
     }
 
     pub fn try_get_inspect_buffers<T: Any>(&self) -> Option<Vec<InspectBuffer>> {
