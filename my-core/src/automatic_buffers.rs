@@ -242,9 +242,9 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
 
     #[track_caller]
     pub fn position_get(&self, operation: usize, name: B) -> &wgpu::Buffer {
-        match self.try_position_get(operation, name){
+        match self.try_position_get(operation, name) {
             Some(val) => val,
-            None => panic!("{:?} not found in \n{:#?}\n", name, self)
+            None => panic!("{:?} not found in \n{:#?}\n", name, self),
         }
     }
 
@@ -257,14 +257,14 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
 
     #[track_caller]
     pub fn get_size<T: Any>(&self, name: B) -> wgpu::BufferAddress {
-        match self.try_get_size::<T>(name){
+        match self.try_get_size::<T>(name) {
             Some(val) => val,
             None => panic!(
                 "{:?} in pass {:?} not found in \n{:#?}\n",
                 name,
                 any::type_name::<T>(),
                 self
-            )
+            ),
         }
     }
 
@@ -277,26 +277,46 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
 
     #[track_caller]
     pub fn get<T: Any>(&self, name: B) -> &wgpu::Buffer {
-        match self.try_get::<T>(name){
+        match self.try_get::<T>(name) {
             Some(val) => val,
             None => panic!(
                 "{:?} in pass {:?} not found in \n{:#?}\n",
                 name,
                 any::type_name::<T>(),
                 self
-            )
+            ),
+        }
+    }
+
+    pub fn try_get_from_any(&self, name: B) -> Option<&wgpu::Buffer> {
+        let idx = self
+            .assignments
+            .iter()
+            .find_map(|(_type_id, MapAndTypeName { map, type_name: _ })| Some(map.get(&name)?.0))?;
+        Some(&self.buffers[idx])
+    }
+
+    #[track_caller]
+    pub fn get_from_any(&self, name: B) -> &wgpu::Buffer{
+        match self.try_get_from_any(name) {
+            Some(val) => val,
+            None => panic!(
+                "{:?} not found in \n{:#?}\n",
+                name,
+                self
+            ),
         }
     }
 
     #[track_caller]
     pub fn get_bindgroup<T: Any>(&self) -> HashMap<B, &wgpu::Buffer> {
-        match self.try_get_bindgroup::<T>(){
+        match self.try_get_bindgroup::<T>() {
             Some(val) => val,
             None => panic!(
                 "Pass {:?} not found in \n{:#?}\n",
                 any::type_name::<T>(),
                 self
-            )
+            ),
         }
     }
 
@@ -313,13 +333,13 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
 
     #[track_caller]
     pub fn get_inspect_buffers<T: Any>(&self) -> Vec<InspectBuffer> {
-        match self.try_get_inspect_buffers::<T>(){
+        match self.try_get_inspect_buffers::<T>() {
             Some(val) => val,
             None => panic!(
                 "Pass {:?} not found in \n{:#?}\n",
                 any::type_name::<T>(),
                 self
-            )
+            ),
         }
     }
 
@@ -489,13 +509,16 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         //         set_up_callbacks.push(set_up);
         //     }
         // }
-        let ops = operations.into_iter().filter(|Operation(enabled, buffers, _set_up)|{
-            let enabled = enabled(params);
-            if enabled{
-                all_buffers.push(buffers(params));
-            }
-            enabled
-        }).collect::<Vec<_>>();
+        let ops = operations
+            .into_iter()
+            .filter(|Operation(enabled, buffers, _set_up)| {
+                let enabled = enabled(params);
+                if enabled {
+                    all_buffers.push(buffers(params));
+                }
+                enabled
+            })
+            .collect::<Vec<_>>();
 
         let buffers = if dbg {
             BufferSolution::new_dbg(all_buffers)
@@ -510,11 +533,11 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         })
     }
 
-    pub fn reinitialize(&mut self, params: &P, dbg: bool){
+    pub fn reinitialize(&mut self, params: &P, dbg: bool) {
         let mut all_buffers = Vec::new();
-        for Operation(enabled, buffers, _set_up) in self.calls.iter(){
+        for Operation(enabled, buffers, _set_up) in self.calls.iter() {
             let enabled = enabled(params);
-            if enabled{
+            if enabled {
                 all_buffers.push(buffers(params));
             }
         }
@@ -526,9 +549,10 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         self.buffers = buffers;
     }
 
-    pub fn finalize(&mut self, device: &wgpu::Device, params: &P) -> Result<(), E>{
+    pub fn finalize(&mut self, device: &wgpu::Device, params: &P) -> Result<(), E> {
         self.buffers.allocate(device);
-        let operations = self.calls
+        let operations = self
+            .calls
             .iter()
             .map(|Operation(_enabled, _buffers, set_up)| set_up(device, params, &self.buffers))
             .collect::<Result<Vec<_>, _>>()?;
@@ -536,7 +560,7 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         self.operations.set(operations);
         Ok(())
     }
-    
+
     pub fn execute(&self, encoder: &mut Encoder, args: &A) {
         let mut operations = self.operations.take();
         for operation in operations.iter_mut() {
