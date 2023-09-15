@@ -1,5 +1,5 @@
 [workspace]
-members = ["macros", "my-core"]
+members = ["macros", "core"]
 
 [workspace.dependencies]
 wgpu = "0.16.1"
@@ -17,8 +17,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-my-core = { path = "my-core", version = "0.1.0" }
-macros = { path = "macros", version = "0.1.0" }
+gpwgpu_core = { path = "core", version = "0.1.0" }
+gpwgpu_macros = { path = "macros", version = "0.1.0" }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 once_cell = { workspace = true }
@@ -33,4 +33,4 @@ slow_primes.workspace = true
 
 
 [features]
-nightly = ["macros/nightly"]
+nightly = ["gpwgpu_macros/nightly"]

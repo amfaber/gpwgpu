@@ -2,9 +2,9 @@ use std::{rc::Rc, ops::Deref};
 
 use bytemuck::Pod;
 #[allow(unused)]
-use my_core::shaderpreprocessor::ShaderProcessor;
+use gpwgpu_core::shaderpreprocessor::ShaderProcessor;
 
-use my_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline}, parser::{Definition, ExpansionError}, utils::{FullComputePass, any_as_u8_slice, Encoder}};
+use gpwgpu_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline}, parser::{Definition, ExpansionError}, utils::{FullComputePass, any_as_u8_slice, Encoder}};
 
 use super::PREPROCESSOR;
 

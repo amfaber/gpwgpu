@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
 };
 
-use my_core::{
+use gpwgpu_core::{
     parser::parse_tokens,
     shaderpreprocessor::{parse_shader, validate_wgsl_file, ShaderProcessor},
     *,
