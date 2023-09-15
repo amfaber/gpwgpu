@@ -7,7 +7,7 @@ description = "Macros for the gpwgpu crate"
 
 
 [dependencies]
-gpwgpu_core = {path = "../core"}
+gpwgpu_core = { path = "../core", version = "0.1.0" }
 proc-macro2 = "1.0.62"
 quote.workspace = true
 syn.workspace = true
