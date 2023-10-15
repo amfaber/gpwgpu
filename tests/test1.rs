@@ -14,7 +14,7 @@ use gpwgpu::{
         reductions::{Reduce, ReductionType, StandardDeviationReduce},
         simple::new_simple,
     },
-    parser::{parse_tokens, process, trim_trailing_spaces, Definition, NestedFor, Token},
+    parser::{parse_tokens, process, trim_trailing_spaces, Definition, NestedFor, Token, parse_token_expr},
     shaderpreprocessor::{ShaderProcessor, ShaderSpecs},
     utils::{
         default_device, read_buffer, AccTime, DebugBundle, Dispatcher, Encoder, FullComputePass,
@@ -737,4 +737,11 @@ fn primes_time_test(){
     dbg!(running);
     dbg!(offset);
     // dbg!(factors);
+}
+
+#[test]
+fn expr_test(){
+    let data = "#expr{#YO}";
+
+    dbg!(parse_tokens(data).unwrap());
 }

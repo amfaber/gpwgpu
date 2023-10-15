@@ -1,11 +1,31 @@
+use nom::{
+    branch::alt,
+    bytes::complete::{tag, take_till, take_until, take_until1},
+    character::streaming::{char, multispace0},
+    combinator::{cut, map, opt},
+    error::ParseError,
+    multi::{many0, many0_count},
+    number::complete::float,
+    sequence::{delimited, preceded, terminated, tuple},
+    IResult, Parser,
+};
+use wgpu::{BindGroupLayoutDescriptor, ShaderStages, StorageTextureAccess};
+
 use crate::{
     parser::{
         get_exports, parse_tokens, process, vec_to_owned, Definition, ExportedMoreThanOnce,
         NomError, Token,
     },
-    utils::{infer_compute_bindgroup_layout, Dispatcher, WorkgroupSize},
+    utils::{Dispatcher, WorkgroupSize},
 };
-use std::{borrow::Cow, collections::HashMap, fmt::Write, fs::DirEntry, path::Path, rc::Rc};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap},
+    fmt::Write,
+    fs::DirEntry,
+    path::Path,
+    rc::Rc,
+};
 
 #[derive(Debug)]
 pub struct NonBoundPipeline {
@@ -168,11 +188,15 @@ impl<'def> ProcessedShader<'def> {
     pub fn build(self, device: &wgpu::Device) -> Rc<NonBoundPipeline> {
         let Self { source, specs } = self;
 
-        let bind_group_layout = infer_compute_bindgroup_layout(
-            device,
-            &source,
-            specs.bindgroup_layout_label.as_deref(),
-        );
+        let mut bind_group_layout =
+            infer_layout(&source, device, specs.bindgroup_layout_label.as_deref());
+
+        let bind_group_layouts = bind_group_layout.iter().collect::<Vec<_>>();
+        // let bind_group_layout = infer_compute_bindgroup_layout(
+        //     device,
+        //     &source,
+        //     specs.bindgroup_layout_label.as_deref(),
+        // );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: specs.shader_label.as_deref(),
@@ -181,7 +205,7 @@ impl<'def> ProcessedShader<'def> {
 
         let pipelinelayout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: specs.pipelinelayout_label.as_deref(),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &bind_group_layouts,
             push_constant_ranges: &[wgpu::PushConstantRange {
                 stages: wgpu::ShaderStages::COMPUTE,
                 range: 0..specs.push_constants.unwrap_or(64),
@@ -198,7 +222,9 @@ impl<'def> ProcessedShader<'def> {
         Rc::new(NonBoundPipeline {
             label: specs.shader_label,
             compute_pipeline,
-            bind_group_layout,
+            // Multiple binding groups are half baked right now. FullComputePass assumes 1,
+            // so we just provide the first here.
+            bind_group_layout: bind_group_layout.swap_remove(0),
             dispatcher: specs.dispatcher,
         })
     }
@@ -282,10 +308,11 @@ impl<'a> ShaderProcessor<'a> {
                 // level error + folder level io error.
                 match parsed.get_exports(&mut exports) {
                     Ok(()) => (),
-                    Err(err) => Err(ParseShaderError{
+                    Err(err) => Err(ParseShaderError {
                         name: name.clone(),
                         variant: ParseShaderErrorVariant::MultipleExports(err),
-                    }).unwrap(),
+                    })
+                    .unwrap(),
                 };
                 (name.into(), parsed)
             })
@@ -306,10 +333,12 @@ impl<'a> ShaderProcessor<'a> {
                 })?;
                 match parsed.get_exports(&mut exports) {
                     Ok(()) => (),
-                    Err(err) => return Err(ParseShaderError{
-                        name: name.to_string(),
-                        variant: ParseShaderErrorVariant::MultipleExports(err),
-                    })
+                    Err(err) => {
+                        return Err(ParseShaderError {
+                            name: name.to_string(),
+                            variant: ParseShaderErrorVariant::MultipleExports(err),
+                        })
+                    }
                 };
                 Ok((name.clone(), parsed))
             })
@@ -348,59 +377,278 @@ impl<'a> ShaderProcessor<'a> {
         let source = process(self.shaders[name].0.clone(), lookup, exports)?;
         Ok(ProcessedShader { source, specs })
     }
-
-    // pub fn from_directory(
-    //     &mut self,
-    //     path: impl AsRef<Path>,
-    //     use_full_path: bool,
-    // ) -> Result<Self, std::io::Error> {
-
-    //     // out.extend_from_directory(path, use_full_path)?;
-    //     Ok(out)
-    // }
-
-    // pub fn extend_from_directory(
-    //     &mut self,
-    //     path: impl AsRef<Path>,
-    //     use_full_path: bool,
-    // ) -> Result<(), std::io::Error> {
-    //     for file in fs::read_dir(path)? {
-    //         let Some((name, file)) = Self::validate_file(file, use_full_path) else { continue };
-    //         let source = Shader::from_wgsl(std::fs::read_to_string(file)?);
-    //         let shader_import = if use_full_path {
-    //             ShaderImport::FullPath(name)
-    //         } else {
-    //             ShaderImport::Name(name)
-    //         };
-    //         self.all_shaders.insert(shader_import, source);
-    //     }
-    //     Ok(())
-    // }
-
-    // pub fn from_shaders(shaders: HashMap<String, Shader>) -> Self {
-    //     shaders.into()
-    // }
 }
 
-// pub mod tests {
-//     #[allow(unused_imports)]
-//     use super::*;
+fn attribute<'a, Error: ParseError<&'a str>>(
+    attr_name: &'static str,
+) -> impl Fn(&'a str) -> IResult<&'a str, u32, Error> {
+    move |inp| {
+        let (inp, _) = terminated(take_until("@"), tag("@"))(inp)?;
 
-//     #[test]
-//     fn test_read_dir() {
-//         // let mut map = Default::default();
-//         // add_directory(&mut map, ".");
-//         // dbg!(map);
+        let (inp, _) = ws(tag(attr_name))(inp)?;
 
-//         let mut map = Default::default();
-//         dbg!(_add_directory(&mut map, r"src\test_shaders", false)).unwrap();
-//         dbg!(&map);
-//         let _processor = ShaderProcessor::default();
+        let (inp, group_idx) = delimited(ws(tag("(")), ws(float), ws(tag(")")))(inp)?;
 
-//         for (_, _shader) in map.iter() {
-//             // let idk = processor.process(shader, &[]);
-//             // dbg!(idk.unwrap());
-//         }
-//         // processor.process(shader, , )
-//     }
+        Ok((inp, group_idx as u32))
+    }
+}
+
+// fn discard_comment<'a, F: Parser<&'a str, O, E>, O, E: ParseError<&'a str>>(
+//     f: F,
+// ) -> impl FnMut(&'a str) -> IResult<&'a str, O, E> {
+//     preceded(
+//         many0_count(tuple((
+//             tag("//"),
+//             take_till(|c| c == '\n'),
+//             opt(char('\n')),
+//         ))),
+//         f,
+//     )
 // }
+
+fn ws<'a, F: Parser<&'a str, O, E>, O, E: ParseError<&'a str>>(
+    f: F,
+) -> impl FnMut(&'a str) -> IResult<&'a str, O, E> {
+    preceded(multispace0, f)
+}
+
+fn buffer_style(inp: &str) -> IResult<&str, wgpu::BindingType> {
+    let (inp, inner) = delimited(ws(tag("<")), ws(cut(take_until1(">"))), tag(">"))(inp)?;
+
+    let (inner, mut buffer_binding_type) = ws(alt((
+        map(tag("storage"), |_| wgpu::BufferBindingType::Storage {
+            read_only: true,
+        }),
+        map(tag("uniform"), |_| wgpu::BufferBindingType::Uniform),
+    )))(inner)?;
+
+    if let wgpu::BufferBindingType::Storage { read_only } = &mut buffer_binding_type {
+        opt(preceded(
+            ws(tag(",")),
+            ws(map(tag("read_write"), |t| {
+                *read_only = false;
+                t
+            })),
+        ))(inner)?;
+    }
+
+    let out = wgpu::BindingType::Buffer {
+        ty: buffer_binding_type,
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    };
+    Ok((inp, out))
+}
+
+fn texture_style(inp: &str) -> IResult<&str, wgpu::BindingType> {
+    let (inp, _) = terminated(take_until(":"), tag(":"))(inp)?;
+
+    let (inp, ty) = ws(alt((
+        map(tag("sampler"), |_| {
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+        }),
+        map(tag("sampler_comparison"), |_| {
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)
+        }),
+        map(tag("texture_depth_2d"), |_| wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        }),
+        map(tag("texture_depth_2d_array"), |_| {
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                multisampled: false,
+            }
+        }),
+        map(tag("texture_depth_cube"), |_| wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::Cube,
+            multisampled: false,
+        }),
+        map(tag("texture_depth_cube_array"), |_| {
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::CubeArray,
+                multisampled: false,
+            }
+        }),
+        map(tag("texture_depth_multisampled_2d"), |_| {
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: true,
+            }
+        }),
+        parse_texture_type,
+    )))(inp)?;
+
+    Ok((inp, ty))
+}
+
+fn parse_texture_type(inp: &str) -> IResult<&str, wgpu::BindingType> {
+    let (inp, _) = tag("texture_")(inp)?;
+
+    let (inp, (storage, multisampled, view_dimension)) = alt((
+        map(tag("1d"), |_| {
+            (false, false, wgpu::TextureViewDimension::D1)
+        }),
+        map(tag("storage_1d"), |_| {
+            (true, false, wgpu::TextureViewDimension::D1)
+        }),
+        map(tag("2d"), |_| {
+            (false, false, wgpu::TextureViewDimension::D2)
+        }),
+        map(tag("storage_2d"), |_| {
+            (true, false, wgpu::TextureViewDimension::D2)
+        }),
+        map(tag("storage_2d_array"), |_| {
+            (true, false, wgpu::TextureViewDimension::D2Array)
+        }),
+        map(tag("multisampled_2d"), |_| {
+            (false, true, wgpu::TextureViewDimension::D2)
+        }),
+        map(tag("2d_array"), |_| {
+            (false, false, wgpu::TextureViewDimension::D2Array)
+        }),
+        map(tag("3d"), |_| {
+            (false, false, wgpu::TextureViewDimension::D3)
+        }),
+        map(tag("storage_3d"), |_| {
+            (true, false, wgpu::TextureViewDimension::D3)
+        }),
+        map(tag("cube"), |_| {
+            (false, false, wgpu::TextureViewDimension::Cube)
+        }),
+        map(tag("cube_array"), |_| {
+            (false, false, wgpu::TextureViewDimension::CubeArray)
+        }),
+    ))(inp)?;
+
+    let (inp, inner) = delimited(ws(tag("<")), ws(take_until(">")), tag(">"))(inp)?;
+
+    let ty = if storage {
+        let (inner, format) = alt((
+            map(tag("rgba8unorm"), |_| wgpu::TextureFormat::Rgba8Unorm),
+            map(tag("rgba8snorm"), |_| wgpu::TextureFormat::Rgba8Snorm),
+            map(tag("rgba8uint"), |_| wgpu::TextureFormat::Rgba8Uint),
+            map(tag("rgba8sint"), |_| wgpu::TextureFormat::Rgba8Sint),
+            map(tag("rgba16uint"), |_| wgpu::TextureFormat::Rgba16Uint),
+            map(tag("rgba16sint"), |_| wgpu::TextureFormat::Rgba16Sint),
+            map(tag("rgba16float"), |_| wgpu::TextureFormat::Rgba16Float),
+            map(tag("r32uint"), |_| wgpu::TextureFormat::R32Uint),
+            map(tag("r32sint"), |_| wgpu::TextureFormat::R32Sint),
+            map(tag("r32float"), |_| wgpu::TextureFormat::R32Float),
+            map(tag("rg32uint"), |_| wgpu::TextureFormat::Rg32Uint),
+            map(tag("rg32sint"), |_| wgpu::TextureFormat::Rg32Sint),
+            map(tag("rg32float"), |_| wgpu::TextureFormat::Rg32Float),
+            map(tag("rgba32uint"), |_| wgpu::TextureFormat::Rgba32Uint),
+            map(tag("rgba32sint"), |_| wgpu::TextureFormat::Rgba32Sint),
+            map(tag("rgba32float"), |_| wgpu::TextureFormat::Rgba32Float),
+            map(tag("bgra8unorm"), |_| wgpu::TextureFormat::Bgra8Unorm),
+        ))(inner)?;
+
+        let (_, access) = preceded(
+            ws(tag(",")),
+            alt((
+                ws(map(tag("read"), |_| StorageTextureAccess::ReadOnly)),
+                ws(map(tag("write"), |_| StorageTextureAccess::WriteOnly)),
+                ws(map(tag("read_write"), |_| StorageTextureAccess::ReadWrite)),
+            )),
+        )(inner)?;
+
+        wgpu::BindingType::StorageTexture {
+            access,
+            format,
+            view_dimension,
+        }
+    } else {
+        let (_, sample_type) = alt((
+            map(tag("f32"), |_| wgpu::TextureSampleType::Float {
+                filterable: true,
+            }),
+            map(tag("i32"), |_| wgpu::TextureSampleType::Sint),
+            map(tag("u32"), |_| wgpu::TextureSampleType::Uint),
+        ))(inner)?;
+
+        wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension,
+            multisampled,
+        }
+    };
+
+    Ok((inp, ty))
+}
+
+pub fn parse_layout_entry(inp: &str) -> IResult<&str, (u32, wgpu::BindGroupLayoutEntry)> {
+    let (inp, group_idx) = attribute("group")(inp)?;
+
+    let (inp, binding_idx) = attribute("binding")(inp)?;
+
+    let (inp, _) = ws(tag("var"))(inp)?;
+
+    let (inp, ty) = alt((buffer_style, texture_style))(inp)?;
+
+    let out = wgpu::BindGroupLayoutEntry {
+        binding: binding_idx,
+        // Need to expand beyond compute at some point
+        visibility: ShaderStages::COMPUTE,
+        ty,
+        count: None,
+    };
+
+    Ok((inp, (group_idx, out)))
+}
+
+/// Doesn't respect comments
+pub fn infer_layout(
+    mut inp: &str,
+    device: &wgpu::Device,
+    label: Option<&str>,
+) -> Vec<wgpu::BindGroupLayout> {
+    let mut map = BTreeMap::new();
+    while let Ok((new_inp, (group_idx, layout))) = parse_layout_entry(inp) {
+        map.entry(group_idx).or_insert(Vec::new()).push(layout);
+        inp = new_inp;
+    }
+
+    map.into_iter()
+        .map(|(_group_idx, entries)| {
+            let desc = BindGroupLayoutDescriptor {
+                label,
+                entries: &entries,
+            };
+            let layout = device.create_bind_group_layout(&desc);
+            layout
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub mod tests {
+    use crate::utils::default_device;
+
+    use super::*;
+    use pollster::FutureExt;
+
+    #[test]
+    fn yup() {
+        let (device, _queue) = default_device().block_on().unwrap();
+        let data = "
+
+        // @group(0) @binding(1)
+var<storage, read> buffer: array<f32>;
+
+@compute @workgroup_size(16, 16, 1)
+fn main(){
+    return;
+}
+        ";
+
+        let _yup = infer_layout(data, &device, None);
+
+        dbg!("Success!");
+    }
+}

@@ -447,7 +447,7 @@ pub fn parse_expr(input: &str) -> IResult<&str, Expr, NomError> {
     parse_or(input)
 }
 
-fn parse_token_expr(input: &str) -> IResult<&str, Token, NomError> {
+pub fn parse_token_expr(input: &str) -> IResult<&str, Token, NomError> {
     let (input, _) = preceded(multispace0, tag("expr"))(input)?;
 
     let (input, inner) = cut(get_inner)(input)?;
@@ -674,7 +674,7 @@ impl<'a> Token<'a> {
     }
 }
 
-fn parse_comment(input: &str) -> IResult<&str, &str, NomError> {
+pub fn parse_comment(input: &str) -> IResult<&str, &str, NomError> {
     recognize(tuple((
         tag("//"),
         take_till(|c| c == '\n'),
