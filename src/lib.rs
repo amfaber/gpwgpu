@@ -1,5 +1,5 @@
-pub use macros::{parse_shaders, parse_shaders_dyn};
-pub use my_core::*;
+pub use gpwgpu_macros::{parse_shaders, parse_shaders_dyn};
+pub use gpwgpu_core::*;
 pub mod operations;
 
 pub use wgpu;

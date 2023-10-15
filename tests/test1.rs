@@ -21,7 +21,7 @@ use gpwgpu::{
         InspectBuffer,
     },
 };
-use macros::*;
+use gpwgpu_macros::*;
 use ndarray::{Array, Array3, Axis, Dim};
 use pollster::FutureExt;
 use wgpu::{

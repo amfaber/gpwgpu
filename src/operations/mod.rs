@@ -1,5 +1,5 @@
 // use crate::shaderpreprocessor::ShaderProcessor;
-use macros::parse_shaders_crate;
+use gpwgpu_macros::parse_shaders_crate;
 // use once_cell::sync::Lazy;
 
 // pub static PREPROCESSOR: Lazy<ShaderProcessor> = 

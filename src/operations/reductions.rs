@@ -1,8 +1,8 @@
 use crate::shaderpreprocessor::*;
 use crate::utils::*;
 use bytemuck::bytes_of;
-use my_core::parser::Definition;
-use my_core::parser::ExpansionError;
+use gpwgpu_core::parser::Definition;
+use gpwgpu_core::parser::ExpansionError;
 
 use super::PREPROCESSOR;
 

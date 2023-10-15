@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use my_core::{utils::{FullComputePass, Encoder}, parser::{ExpansionError, Definition}, shaderpreprocessor::ShaderSpecs};
+use gpwgpu_core::{utils::{FullComputePass, Encoder}, parser::{ExpansionError, Definition}, shaderpreprocessor::ShaderSpecs};
 
 use super::PREPROCESSOR;
 

@@ -1,12 +1,12 @@
 [workspace]
-members = ["macros", "my-core"]
+members = ["macros", "core"]
 
 [workspace.dependencies]
 wgpu = "0.16.1"
 bytemuck = { version = "1.12.1", features = ["derive"] }
 once_cell = "1.18.0"
 quote = "1.0.28"
-syn = {version = "*", features = ["full"]}
+syn = {version = "2.0.33", features = ["full"]}
 bincode = "1.3.3"
 slow_primes = "0.1.14"
 
@@ -15,10 +15,12 @@ slow_primes = "0.1.14"
 name = "gpwgpu"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "A crate intended to make it easier to do general purpose GPU programming (GPGPU) in wgpu."
 
 [dependencies]
-my-core = { path = "my-core" }
-macros = { path = "macros" }
+gpwgpu_core = { path = "core", version = "0.1.0" }
+gpwgpu_macros = { path = "macros", version = "0.1.0" }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 once_cell = { workspace = true }
@@ -34,4 +36,4 @@ slow_primes.workspace = true
 
 
 [features]
-nightly = ["macros/nightly"]
+nightly = ["gpwgpu_macros/nightly"]
