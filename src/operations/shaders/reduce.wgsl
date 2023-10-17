@@ -31,7 +31,6 @@ fn main(
         return;
     }
 
-    // var idx = global_id.x;
     let stride = pc.stride;
     
     var datum = input[idx];

@@ -741,7 +741,7 @@ fn primes_time_test(){
 
 #[test]
 fn expr_test(){
-    let data = "#expr{#YO}";
+    let data = "#expr{YO}";
 
     dbg!(parse_tokens(data).unwrap());
 }

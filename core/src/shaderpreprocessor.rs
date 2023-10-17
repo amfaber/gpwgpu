@@ -1,12 +1,11 @@
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_until, take_until1},
-    character::streaming::{char, multispace0},
+    bytes::complete::{tag, take_until, take_until1},
+    character::streaming::multispace0,
     combinator::{cut, map, opt},
     error::ParseError,
-    multi::{many0, many0_count},
     number::complete::float,
-    sequence::{delimited, preceded, terminated, tuple},
+    sequence::{delimited, preceded, terminated},
     IResult, Parser,
 };
 use wgpu::{BindGroupLayoutDescriptor, ShaderStages, StorageTextureAccess};
@@ -230,7 +229,7 @@ impl<'def> ProcessedShader<'def> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParsedShader<'a>(pub Vec<Token<'a>>);
 
 impl<'a> ParsedShader<'a> {
@@ -246,7 +245,7 @@ impl<'a> ParsedShader<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ShaderProcessor<'a> {
     pub shaders: HashMap<Cow<'a, str>, ParsedShader<'a>>,
     pub exports: HashMap<Cow<'a, str>, Vec<Token<'a>>>,
