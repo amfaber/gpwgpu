@@ -2,7 +2,6 @@ use crate::shaderpreprocessor::*;
 use crate::utils::*;
 use bytemuck::bytes_of;
 use gpwgpu_core::parser::Definition;
-use gpwgpu_core::parser::ExpansionError;
 
 use super::PREPROCESSOR;
 
@@ -15,6 +14,7 @@ pub enum ReductionType {
     Custom(String),
 }
 
+
 impl ReductionType {
     fn to_shader_val(&self) -> (&'static str, Definition) {
         match self {
@@ -24,6 +24,83 @@ impl ReductionType {
             Self::Max => ("OPERATION", Definition::Any("acc = max(acc, datum);".into())),
             Self::Custom(operation) => ("OPERATION", Definition::Any(operation.into())),
         }
+    }
+}
+
+#[derive(Clone, Default)]
+pub enum InputType{
+    #[default]
+    F32,
+    Vec4F32,
+    Custom(String),
+}
+
+impl InputType {
+    fn to_shader_val(&self) -> (&'static str, Definition) {
+        match self {
+            Self::F32 => ("INPUT_TYPE", Definition::Any("f32".into())),
+            Self::Vec4F32 => ("INPUT_TYPE", Definition::Any("vec4<f32>".into())),
+            Self::Custom(ty) => ("INPUT_TYPE", Definition::Any(ty.into())),
+        }
+    }
+}
+
+pub struct ReduceBuilder<'a>{
+    pub input: &'a wgpu::Buffer,
+    pub output: &'a wgpu::Buffer,
+    pub temp: Option<&'a wgpu::Buffer>,
+    pub ty: ReductionType,
+    pub specs: ShaderSpecs<'static>,
+    pub unroll: u32,
+    pub last_size: u32,
+    pub nanprotection: bool,
+    pub input_type: InputType,
+    pub inplace_label: String,
+    pub extra_push: String,
+    pub extra_last: String,
+    pub extra_buffers: String,
+    pub last_buffers: Vec<&'a wgpu::Buffer>,
+    
+}
+
+impl<'a> ReduceBuilder<'a>{
+    pub fn new(input: &'a wgpu::Buffer, output: &'a wgpu::Buffer, ty: ReductionType) -> Self{
+        Self{
+            input,
+            output,
+            temp: None,
+            ty,
+            specs: ShaderSpecs::new((256, 1, 1)),
+            unroll: 8,
+            last_size: 24,
+            nanprotection: false,
+            input_type: InputType::F32,
+            inplace_label: String::new(),
+            extra_push: String::new(),
+            extra_last: String::new(),
+            extra_buffers: String::new(),
+            last_buffers: Vec::new(),
+        }
+    }
+
+    pub fn build(self, device: &wgpu::Device) -> Result<Reduce, ShaderError>{
+        Reduce::new(
+            device,
+            self.input,
+            self.temp,
+            self.output,
+            self.ty,
+            self.nanprotection,
+            self.unroll,
+            self.specs,
+            self.extra_push,
+            self.extra_last,
+            self.extra_buffers,
+            self.last_buffers,
+            self.last_size,
+            &self.inplace_label,
+            self.input_type,
+        )
     }
 }
 
@@ -63,7 +140,8 @@ impl Reduce {
         last_size: u32,
 
         inplace_label: &str,
-    ) -> Result<Self, ExpansionError> {
+        input_type: InputType,
+    ) -> Result<Self, ShaderError> {
         let workgroup_size = specs.workgroup_size.clone();
 
         let outplace_pass = match temp {
@@ -74,12 +152,13 @@ impl Reduce {
                         ("NANPROTECT", nanprotection.into()),
                         ("OUTPLACE", true.into()),
                         ("UNROLL", unroll.into()),
+                        input_type.to_shader_val(),
                         ty.to_shader_val(),
                     ])
                     .labels("outplace");
 
                 let shader = PREPROCESSOR.process_by_name("reduce", outplace_specs)?;
-                let outplace = shader.build(device);
+                let outplace = shader.build(device)?;
 
                 let bindgroup = [(0, input), (1, output)];
 
@@ -94,11 +173,12 @@ impl Reduce {
                     ("NANPROTECT".into(), Definition::Bool(false)),
                     ("OUTPLACE".into(), Definition::Bool(false)),
                     ("UNROLL".into(), Definition::UInt(unroll)),
+                    input_type.to_shader_val(),
                     ty.to_shader_val(),
                 ])
                 .labels(inplace_label);
             let inplace = PREPROCESSOR.process_by_name("reduce", specs)?;
-            let inplace = inplace.build(device);
+            let inplace = inplace.build(device)?;
 
             let bindgroup = [(
                 0,
@@ -121,11 +201,12 @@ impl Reduce {
                     ),
                     ("EXTRABUFFERS".into(), Definition::Any(extra_buffers.into())),
                     ("EXTRALAST".into(), Definition::Any(extra_last.into())),
+                    input_type.to_shader_val(),
                     ty.to_shader_val(),
                 ])
                 .labels("last_reduction");
             let last_reduction = PREPROCESSOR.process_by_name("last_reduction", specs)?;
-            let last_reduction = last_reduction.build(device);
+            let last_reduction = last_reduction.build(device)?;
 
             let last_input = match temp {
                 Some(buffer) => buffer,
@@ -197,7 +278,7 @@ impl Reduce {
 }
 
 #[derive(Debug)]
-struct MeanReduce {
+pub struct MeanReduce {
     reduction: Reduce,
 }
 
@@ -212,7 +293,8 @@ impl MeanReduce {
         unroll: u32,
         specs: ShaderSpecs<'_>,
         last_size: u32,
-    ) -> Result<Self, ExpansionError> {
+        input_type: InputType,
+    ) -> Result<Self, ShaderError> {
         let extra_buffers = match divisor {
             Some(_) => "\
 @group(0) @binding(2)
@@ -225,7 +307,13 @@ var<storage, read> mean_divisor: u32;"
 
         let extra_last = match divisor {
             Some(_) => "acc /= f32(mean_divisor);".to_string(),
-            None => "acc /= f32(pc.length);".to_string(),
+            None => {
+                match input_type{
+                    InputType::F32 => "acc /= f32(pc.length);".to_string(),
+                    InputType::Vec4F32 => "acc /= vec4(f32(pc.length));".to_string(),
+                    InputType::Custom(_) => panic!("Unsupported so far"),
+                }
+            },
         };
 
         let last_buffers = divisor;
@@ -248,6 +336,7 @@ var<storage, read> mean_divisor: u32;"
             last_buffers,
             last_size,
             "mean_inplace",
+            input_type,
         )?;
 
         Ok(Self { reduction })
@@ -277,7 +366,8 @@ impl StandardDeviationReduce {
         unroll: u32,
         specs: ShaderSpecs<'_>,
         last_size: u32,
-    ) -> Result<Self, ExpansionError> {
+        input_type: InputType,
+    ) -> Result<Self, ShaderError> {
         let mean = {
             MeanReduce::new(
                 device,
@@ -289,6 +379,7 @@ impl StandardDeviationReduce {
                 unroll,
                 specs.clone(),
                 last_size,
+                input_type.clone(),
             )?
         };
 
@@ -298,11 +389,12 @@ impl StandardDeviationReduce {
                 // .direct_dispatcher(&[size as u32, 1, 1])
                 .extend_defs([
                     ("NANPROTECT", Definition::Bool(divisor.is_some())),
+                    input_type.to_shader_val(),
                     // ("TOTALELEMENTS", Definition::UInt(size as u32)),
                 ]);
             let shader = PREPROCESSOR
                 .process_by_name("square_residuals", specs)?
-                .build(device);
+                .build(device)?;
             let bindgroup = [(0, input), (1, temp), (2, output)];
             (FullComputePass::new(device, shader, &bindgroup), wg_size)
         };
@@ -343,6 +435,7 @@ var<storage, read> mean_divisor: u32;"
                 last_buffers,
                 last_size,
                 "std_inplace",
+                input_type,
             )?
         };
 

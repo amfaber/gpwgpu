@@ -635,7 +635,8 @@ impl<'a> DebugEncoder<'a> {
             slice.map_async(wgpu::MapMode::Read, |_| {});
             device.poll(wgpu::Maintain::Wait);
             let data = slice.get_mapped_range().to_vec();
-            std::fs::write(&save_path.join(format!("{name}.bin")), &data).unwrap();
+            let save_name = save_path.join(format!("{name}.bin"));
+            std::fs::write(&save_name, &data).expect(save_name.as_os_str().to_str().unwrap());
             mappable_buffer.unmap();
         }
 

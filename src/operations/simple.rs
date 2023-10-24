@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use gpwgpu_core::{utils::{FullComputePass, Encoder}, parser::{ExpansionError, Definition}, shaderpreprocessor::ShaderSpecs};
+use gpwgpu_core::{utils::{FullComputePass, Encoder}, parser::Definition, shaderpreprocessor::{ShaderSpecs, ShaderError}};
 
 use super::PREPROCESSOR;
 
@@ -47,7 +47,7 @@ pub fn new_simple(
     input: &wgpu::Buffer,
     unary_binary: UnaryBinary,
     output: Option<&wgpu::Buffer>,
-) -> Result<FullComputePass, ExpansionError>{
+) -> Result<FullComputePass, ShaderError>{
 
     let binary = match unary_binary{
         UnaryBinary::Binary(_) | UnaryBinary::BinaryConstant(_) => true,
@@ -74,7 +74,7 @@ pub fn new_simple(
 
     let shader = PREPROCESSOR.process_by_name("simple", specs)?;
 
-    let pipeline = shader.build(device);
+    let pipeline = shader.build(device)?;
 
     let mut bindgroup = vec![
         (0, input),
@@ -103,7 +103,7 @@ impl BinaryOutplace{
         input: &wgpu::Buffer,
         input2: &wgpu::Buffer,
         output: &wgpu::Buffer,
-    ) -> Result<Self, ExpansionError>{
+    ) -> Result<Self, ShaderError>{
         Ok(Self(new_simple(
             device,
             length,
@@ -127,7 +127,7 @@ impl BinaryInplace{
         ty: OperationType,
         input: &wgpu::Buffer,
         input2: &wgpu::Buffer,
-    ) -> Result<Self, ExpansionError>{
+    ) -> Result<Self, ShaderError>{
         Ok(Self(new_simple(
             device,
             length,
@@ -151,7 +151,7 @@ impl UnaryInplace{
         ty: OperationType,
         input: &wgpu::Buffer,
         constant: f32,
-    ) -> Result<Self, ExpansionError>{
+    ) -> Result<Self, ShaderError>{
         Ok(Self(new_simple(
             device,
             length,
@@ -176,7 +176,7 @@ impl UnaryOutplace{
         input: &wgpu::Buffer,
         constant: f32,
         output: &wgpu::Buffer,
-    ) -> Result<Self, ExpansionError>{
+    ) -> Result<Self, ShaderError>{
         Ok(Self(new_simple(
             device,
             length,

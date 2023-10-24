@@ -4,7 +4,7 @@ use bytemuck::Pod;
 #[allow(unused)]
 use gpwgpu_core::shaderpreprocessor::ShaderProcessor;
 
-use gpwgpu_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline}, parser::{Definition, ExpansionError}, utils::{FullComputePass, any_as_u8_slice, Encoder}};
+use gpwgpu_core::{shaderpreprocessor::{ShaderSpecs, NonBoundPipeline, ShaderError}, parser::{Definition}, utils::{FullComputePass, any_as_u8_slice, Encoder}};
 
 use super::PREPROCESSOR;
 
@@ -177,7 +177,7 @@ impl<const N: usize> GaussianSmoothing<N> {
     pub fn pipeline(
         device: &wgpu::Device,
         dims: [i32; N],
-    ) -> Result<Rc<NonBoundPipeline>, ExpansionError> {
+    ) -> Result<Rc<NonBoundPipeline>, ShaderError> {
         let extra_pushconstants = "sigma: f32,";
         let init = "let sigma2 = pow(pc.sigma, 2.0);";
         let kernel_func = "\
@@ -204,7 +204,7 @@ impl<const N: usize> GaussianSmoothing<N> {
         
         let shader = PREPROCESSOR.process_by_name("1d_strides", specs)?;
 
-        Ok(shader.build(device))
+        shader.build(device)
     }
 
     
@@ -236,7 +236,7 @@ impl<const N: usize> GaussianSmoothing<N> {
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
         output: &wgpu::Buffer,
-    ) -> Result<Self, ExpansionError> {
+    ) -> Result<Self, ShaderError> {
         let pipeline = Self::pipeline(
             device,
             dims,
@@ -282,7 +282,7 @@ impl<'a, const N: usize> GaussianLaplace<'a, N>{
     pub fn pipeline(
         device: &wgpu::Device,
         dims: [i32; N],
-    ) -> Result<Rc<NonBoundPipeline>, ExpansionError> {
+    ) -> Result<Rc<NonBoundPipeline>, ShaderError> {
         
         let extra_pushconstants = "sigma: f32,\ndiff: i32,\nlast: i32";
         let init = "let sigma2 = pow(pc.sigma, 2.0);";
@@ -328,7 +328,7 @@ var<storage, read_write> final_output: array<f32>;";
         
         let shader = PREPROCESSOR.process_by_name("1d_strides", specs)?;
 
-        Ok(shader.build(device))
+        shader.build(device)
 
     }
     
@@ -364,7 +364,7 @@ var<storage, read_write> final_output: array<f32>;";
         temp: &wgpu::Buffer,
         temp2: &wgpu::Buffer,
         output: &'a wgpu::Buffer,
-    ) -> Result<Self, ExpansionError> {
+    ) -> Result<Self, ShaderError> {
         let pipeline = Self::pipeline(device, dims)?;
         Ok(Self::from_pipeline(
             device,

@@ -19,6 +19,7 @@ serde = { version = "1.0.169", features = ["derive"] }
 bincode.workspace = true
 nom-supreme = "0.8.0"
 slow_primes.workspace = true
+pollster.workspace = true
 
 [dev-dependencies]
 pollster = "0.3.0"

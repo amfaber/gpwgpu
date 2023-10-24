@@ -1,8 +1,8 @@
 @group(0) @binding(0)
-var<storage, read> input: array<f32>;
+var<storage, read> input: array<#INPUT_TYPE>;
 
 @group(0) @binding(1)
-var<storage, read_write> output: array<f32>;
+var<storage, read_write> output: array<#INPUT_TYPE>;
 
 @group(0) @binding(2)
 var<uniform> mean: f32;

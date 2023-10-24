@@ -11,7 +11,7 @@ use gpwgpu::{
     automatic_buffers::MemoryReq,
     operations::{
         convolutions::{GaussianLaplace, GaussianSmoothing},
-        reductions::{Reduce, ReductionType, StandardDeviationReduce},
+        reductions::{Reduce, ReductionType, StandardDeviationReduce, InputType},
         simple::new_simple,
     },
     parser::{parse_tokens, process, trim_trailing_spaces, Definition, NestedFor, Token, parse_token_expr},
@@ -70,6 +70,7 @@ fn standard_deviation() {
             2,
             specs.clone(),
             8,
+            InputType::F32,
         )
         .unwrap();
 
@@ -152,6 +153,7 @@ fn max() {
             None,
             24,
             "",
+            InputType::F32,
         )
         .unwrap();
 
@@ -170,6 +172,86 @@ fn max() {
         );
 
         assert!((result - cpu_result).abs() < 0.0001);
+    };
+
+    for i in 980..1020 {
+        full(i)
+    }
+    full(8);
+    full(391939);
+}
+
+
+#[test]
+fn max_vec4() {
+    let (device, queue) = default_device().block_on().unwrap();
+    let output = device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: (std::mem::size_of::<f32>() * 4) as _,
+        usage: BufferUsages::STORAGE
+            | BufferUsages::MAP_READ
+            | BufferUsages::UNIFORM
+            | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let specs = ShaderSpecs::new((256, 1, 1));
+
+    let full = |n: i32| {
+        let contents: Vec<f32> = (-n..n).map(|x| x as f32).collect();
+
+        let inp = device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&contents),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        });
+
+        let temp = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (3 * n as usize * std::mem::size_of::<f32>()) as _,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let ty = ReductionType::Max;
+
+        // let cpu_result = match ty {
+        //     ReductionType::Min => contents.iter().min_by(|a, b| a.total_cmp(b)).unwrap(),
+        //     ReductionType::Max => contents.iter().max_by(|a, b| a.total_cmp(b)).unwrap(),
+        //     _ => panic!("test should be min or max"),
+        // };
+
+        let reduction = Reduce::new(
+            &device,
+            &inp,
+            Some(&temp),
+            &output,
+            // (2 * n) as _,
+            ty,
+            false,
+            8,
+            specs.clone(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            None,
+            24,
+            "",
+            InputType::Vec4F32,
+        )
+        .unwrap();
+
+        // let mut encoder = device.create_command_encoder(&Default::default());
+        let mut encoder = Encoder::new(&device);
+
+        reduction.execute(&mut encoder, (2 * n as u32) / 4, &[]);
+
+        
+        queue.submit(Some(encoder.finish()));
+        device.poll(wgpu::MaintainBase::Wait);
+        let result: [f32; 4] = read_buffer(&device, &output, 0, None)[0];
+        dbg!(result);
+        // assert!((result - cpu_result).abs() < 0.0001);
     };
 
     for i in 980..1020 {

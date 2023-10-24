@@ -5,14 +5,14 @@ struct PushConstants{
 
 #if OUTPLACE{
 @group(0) @binding(0)
-var<storage, read> input: array<f32>;
+var<storage, read> input: array<#INPUT_TYPE>;
 
 @group(0) @binding(1)
-var<storage, read_write> output: array<f32>;
+var<storage, read_write> output: array<#INPUT_TYPE>;
 
 } #else {
 @group(0) @binding(0)
-var<storage, read_write> input: array<f32>;
+var<storage, read_write> input: array<#INPUT_TYPE>;
 }
 
 var<push_constant> pc: PushConstants;

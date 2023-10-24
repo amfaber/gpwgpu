@@ -12,11 +12,12 @@ use wgpu::{BindGroupLayoutDescriptor, ShaderStages, StorageTextureAccess};
 
 use crate::{
     parser::{
-        get_exports, parse_tokens, process, vec_to_owned, Definition, ExportedMoreThanOnce,
-        NomError, Token,
+        get_exports, parse_tokens, process, vec_to_owned, Definition, ExpansionError,
+        ExportedMoreThanOnce, NomError, Token,
     },
     utils::{Dispatcher, WorkgroupSize},
 };
+use pollster::FutureExt;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap},
@@ -155,6 +156,25 @@ pub struct ParseShaderError<'a> {
     variant: ParseShaderErrorVariant<'a>,
 }
 
+#[derive(thiserror::Error)]
+pub enum ShaderError {
+    #[error("Expansion error: {}", .0)]
+    ExpansionError(#[from] ExpansionError),
+
+    #[error("Wgpu validation error occured in this shader:\n-------------\n{}\n\n-------------\nWgpu Error: {}\n-------------", .shader, .error)]
+    ValidationError {
+        shader: String,
+        error: wgpu::Error,
+    },
+}
+
+impl std::fmt::Debug for ShaderError{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self.to_string();
+        f.write_str(&s)
+    }
+}
+
 /// A processed [Shader]. This cannot contain preprocessor directions. It must be "ready to compile"
 
 #[derive(Clone)]
@@ -163,18 +183,22 @@ pub struct ProcessedShader<'def> {
     pub specs: ShaderSpecs<'def>,
 }
 
+fn format_shader(shader: &str) -> String{
+    let mut s = "\n".to_string();
+
+    let n_lines = shader.lines().count() as f32;
+
+    let pad = (n_lines.log10() + 1.0).floor() as usize;
+
+    for (i, line) in shader.lines().enumerate() {
+        write!(&mut s, "{: >width$} {line}\n", i + 1, width = pad).unwrap();
+    }
+    s
+}
+
 impl<'def> std::fmt::Debug for ProcessedShader<'def> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = "\n".to_string();
-
-        let n_lines = self.source.lines().count() as f32;
-
-        let pad = (n_lines.log10() + 1.0).floor() as usize;
-
-        for (i, line) in self.source.lines().enumerate() {
-            write!(&mut s, "{: >width$} {line}\n", i + 1, width = pad).unwrap();
-        }
-
+        let s = format_shader(&self.source);
         f.write_str(&s)
     }
 }
@@ -184,24 +208,27 @@ impl<'def> ProcessedShader<'def> {
         &self.source
     }
 
-    pub fn build(self, device: &wgpu::Device) -> Rc<NonBoundPipeline> {
+    pub fn build(self, device: &wgpu::Device) -> Result<Rc<NonBoundPipeline>, ShaderError> {
         let Self { source, specs } = self;
 
         let mut bind_group_layout =
             infer_layout(&source, device, specs.bindgroup_layout_label.as_deref());
 
         let bind_group_layouts = bind_group_layout.iter().collect::<Vec<_>>();
-        // let bind_group_layout = infer_compute_bindgroup_layout(
-        //     device,
-        //     &source,
-        //     specs.bindgroup_layout_label.as_deref(),
-        // );
 
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: specs.shader_label.as_deref(),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
+            source: wgpu::ShaderSource::Wgsl((&source).into()),
         });
+        if let Some(err) = device.pop_error_scope().block_on() {
+            return Err(ShaderError::ValidationError {
+                error: err,
+                shader: format_shader(&source),
+            });
+        }
 
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         let pipelinelayout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: specs.pipelinelayout_label.as_deref(),
             bind_group_layouts: &bind_group_layouts,
@@ -210,22 +237,35 @@ impl<'def> ProcessedShader<'def> {
                 range: 0..specs.push_constants.unwrap_or(64),
             }],
         });
+        if let Some(err) = device.pop_error_scope().block_on() {
+            return Err(ShaderError::ValidationError {
+                error: err,
+                shader: format_shader(&source),
+            });
+        }
 
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: specs.pipeline_label.as_deref(),
             layout: Some(&pipelinelayout),
             module: &shader,
             entry_point: specs.entry_point.as_deref().unwrap_or("main"),
         });
+        if let Some(err) = device.pop_error_scope().block_on() {
+            return Err(ShaderError::ValidationError {
+                error: err,
+                shader: format_shader(&source),
+            });
+        }
 
-        Rc::new(NonBoundPipeline {
+        Ok(Rc::new(NonBoundPipeline {
             label: specs.shader_label,
             compute_pipeline,
             // Multiple binding groups are half baked right now. FullComputePass assumes 1,
             // so we just provide the first here.
             bind_group_layout: bind_group_layout.swap_remove(0),
             dispatcher: specs.dispatcher,
-        })
+        }))
     }
 }
 
@@ -260,7 +300,13 @@ pub fn validate_wgsl_file(
         return None;
     }
     let path = file.path();
-    let Some(ext) = path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_lowercase()) else { return None };
+    let Some(ext) = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_lowercase())
+    else {
+        return None;
+    };
     if ext != "wgsl" {
         return None;
     }
