@@ -161,10 +161,10 @@ pub enum ShaderError {
     #[error("Expansion error: {}", .0)]
     ExpansionError(#[from] ExpansionError),
 
-    #[error("Wgpu validation error occured in this shader:\n-------------\n{}\n\n-------------\nWgpu Error: {}\n-------------", .shader, .error)]
+    #[error("Wgpu validation error occured in this shader:\n-------------\n{}\n\n-------------\nWgpu Error: {}\n-------------", .shader, .error_string)]
     ValidationError {
         shader: String,
-        error: wgpu::Error,
+        error_string: String,
     },
 }
 
@@ -223,7 +223,7 @@ impl<'def> ProcessedShader<'def> {
         });
         if let Some(err) = device.pop_error_scope().block_on() {
             return Err(ShaderError::ValidationError {
-                error: err,
+                error_string: err.to_string(),
                 shader: format_shader(&source),
             });
         }
@@ -239,7 +239,7 @@ impl<'def> ProcessedShader<'def> {
         });
         if let Some(err) = device.pop_error_scope().block_on() {
             return Err(ShaderError::ValidationError {
-                error: err,
+                error_string: err.to_string(),
                 shader: format_shader(&source),
             });
         }
@@ -253,7 +253,7 @@ impl<'def> ProcessedShader<'def> {
         });
         if let Some(err) = device.pop_error_scope().block_on() {
             return Err(ShaderError::ValidationError {
-                error: err,
+                error_string: err.to_string(),
                 shader: format_shader(&source),
             });
         }
