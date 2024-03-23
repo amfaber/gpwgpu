@@ -7,10 +7,11 @@ use std::{
     fmt::Write,
     mem::size_of,
     ops::{Bound, Deref, DerefMut},
-    path::{PathBuf, Path},
-    rc::Rc, time::{Duration, Instant},
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::{Duration, Instant},
 };
-use wgpu::{self, util::DeviceExt, CommandEncoder, MAP_ALIGNMENT, RequestAdapterOptions};
+use wgpu::{self, util::DeviceExt, CommandEncoder, RequestAdapterOptions, MAP_ALIGNMENT};
 
 use crate::shaderpreprocessor::NonBoundPipeline;
 
@@ -18,32 +19,34 @@ use crate::shaderpreprocessor::NonBoundPipeline;
 /// No guarantuees are made about the layout of the workgrid. Tries to minimize
 /// invocations above "len". The shader should calculate its own flat index to
 /// ensure consitency.
-/// 
+///
 /// Useful for large dispatches that can't fit into a single dimension due to
 /// hardware limits.
-pub fn dispatcher_flat(len: u64, wg_size: WorkgroupSize) -> [u32; 3]{
+pub fn dispatcher_flat(len: u64, wg_size: WorkgroupSize) -> [u32; 3] {
     let wg_size = wg_size.x * wg_size.y * wg_size.z;
     let n_workgroups = len as f64 / wg_size as f64;
     let exact_workgroups = (len as usize + wg_size as usize - 1) / wg_size as usize;
-    if exact_workgroups < (1 << 16){
-        return [exact_workgroups as u32, 1, 1]
+    if exact_workgroups < (1 << 16) {
+        return [exact_workgroups as u32, 1, 1];
     }
     let primes = slow_primes::Primes::sieve((n_workgroups.sqrt() * 1.1) as usize);
     let mut work_group = [1, 1, 1];
     let mut keep_going = true;
     let mut offset = 0;
-    while keep_going{
+    while keep_going {
         let factors = primes.factor(exact_workgroups + offset).unwrap();
         let mut idx = 0;
         let mut iter = factors.into_iter();
-        keep_going = loop{
-            let Some((base, exp)) = iter.next() else { break false };
-            if base > (1<<16){
+        keep_going = loop {
+            let Some((base, exp)) = iter.next() else {
+                break false;
+            };
+            if base > (1 << 16) {
                 offset += 1;
-                break true
+                break true;
             }
-            for _ in 0..exp{
-                if work_group[idx] * base < (1<<16){
+            for _ in 0..exp {
+                if work_group[idx] * base < (1 << 16) {
                     work_group[idx] *= base;
                 } else {
                     idx += 1;
@@ -55,49 +58,47 @@ pub fn dispatcher_flat(len: u64, wg_size: WorkgroupSize) -> [u32; 3]{
     work_group.map(|x| x as u32)
 }
 
-pub enum AccTime{
+pub enum AccTime {
     Disabled,
-    Enabled{
-        acc: Duration,
-        now: Option<Instant>,
-    },
+    Enabled { acc: Duration, now: Option<Instant> },
 }
 
-impl AccTime{
-    pub fn new(enabled: bool) -> Self{
-        if enabled{
-            Self::Enabled { acc: Duration::ZERO, now: None }
+impl AccTime {
+    pub fn new(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled {
+                acc: Duration::ZERO,
+                now: None,
+            }
         } else {
             Self::Disabled
         }
     }
 
     #[inline]
-    pub fn start(&mut self){
-        match self{
+    pub fn start(&mut self) {
+        match self {
             AccTime::Disabled => (),
-            AccTime::Enabled { acc: _, now } => {
-                *now = Some(Instant::now())
-            },
+            AccTime::Enabled { acc: _, now } => *now = Some(Instant::now()),
         }
     }
 
     #[inline]
-    pub fn stop(&mut self){
-        match self{
+    pub fn stop(&mut self) {
+        match self {
             AccTime::Disabled => (),
             AccTime::Enabled { acc, now } => {
-                if let Some(now) = now.take(){
+                if let Some(now) = now.take() {
                     *acc += now.elapsed()
                 }
-            },
+            }
         }
     }
 }
 
-impl std::fmt::Debug for AccTime{
+impl std::fmt::Debug for AccTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self{
+        match self {
             AccTime::Disabled => Ok(()),
             AccTime::Enabled { acc, now: _ } => f.write_fmt(format_args!("{acc:?}")),
         }
@@ -129,13 +130,15 @@ pub fn inspect_texture(
     encoder: &mut wgpu::CommandEncoder,
     path: impl AsRef<Path>,
 ) -> ! {
-    let mut encoder = std::mem::replace(encoder, device.create_command_encoder(&Default::default()));
+    let mut encoder =
+        std::mem::replace(encoder, device.create_command_encoder(&Default::default()));
 
     let padding = BufferPadding::new(texture.width());
 
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: (padding.padded_bytes_per_row * texture.height() * texture.depth_or_array_layers()) as u64,
+        size: (padding.padded_bytes_per_row * texture.height() * texture.depth_or_array_layers())
+            as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -159,27 +162,46 @@ pub fn inspect_texture(
     );
 
     queue.submit(Some(encoder.finish()));
-    
+
     let slc = buffer.slice(..);
 
     slc.map_async(wgpu::MapMode::Read, |_| {});
 
     device.poll(wgpu::Maintain::Wait);
 
-    let mut data = Vec::with_capacity((texture.width() * texture.height() * texture.depth_or_array_layers() * 4) as _);
-    for padded in slc.get_mapped_range().chunks(padding.unpadded_bytes_per_row as usize){
+    let mut data = Vec::with_capacity(
+        (texture.width() * texture.height() * texture.depth_or_array_layers() * 4) as _,
+    );
+    for padded in slc
+        .get_mapped_range()
+        .chunks(padding.unpadded_bytes_per_row as usize)
+    {
         data.extend_from_slice(&padded[..padding.unpadded_bytes_per_row as usize]);
     }
 
     let mut size_name = path.as_ref().to_path_buf();
-    let mut name = path.as_ref().file_name().unwrap().to_string_lossy().to_string();
+    let mut name = path
+        .as_ref()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     name.push_str("_size");
     size_name.set_file_name(name);
     size_name.set_extension("txt");
-    
+
     std::fs::write(path, data).unwrap();
-    std::fs::write(size_name, format!("{}, {}, {}", texture.depth_or_array_layers(), texture.height(), texture.width())).unwrap();
-    
+    std::fs::write(
+        size_name,
+        format!(
+            "{}, {}, {}",
+            texture.depth_or_array_layers(),
+            texture.height(),
+            texture.width()
+        ),
+    )
+    .unwrap();
+
     panic!("Inspected texture")
 }
 
@@ -391,23 +413,32 @@ impl<'a, T: BindingGroup> BindingGroup for &T {
     }
 }
 
-pub async fn default_device() -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
+#[derive(thiserror::Error, Debug)]
+pub enum DefaultDeviceError {
+    #[error("{}", .0)]
+    RequestDeviceError(#[from] wgpu::RequestDeviceError),
+    #[error("No adapter was returned from the wgpu instance")]
+    NoAdapter,
+}
+
+pub async fn default_device() -> Result<(wgpu::Device, wgpu::Queue), DefaultDeviceError> {
     let instance = wgpu::Instance::new(Default::default());
-    let adapter = instance.request_adapter(&RequestAdapterOptions{
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        force_fallback_adapter: false,
-        compatible_surface: None,
-    });
+    let adapter = instance
+        .request_adapter(&RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })
+        .await
+        .ok_or(DefaultDeviceError::NoAdapter)?;
     let mut device_desc = wgpu::DeviceDescriptor::default();
-    device_desc.limits.max_push_constant_size = 64;
-    device_desc.features =
+    device_desc.required_limits.max_push_constant_size = 64;
+    device_desc.required_features =
         wgpu::Features::MAPPABLE_PRIMARY_BUFFERS | wgpu::Features::PUSH_CONSTANTS;
-    device_desc.limits.max_storage_buffers_per_shader_stage = 12;
-    adapter
-        .await
-        .ok_or(wgpu::RequestDeviceError)?
-        .request_device(&device_desc, None)
-        .await
+    device_desc
+        .required_limits
+        .max_storage_buffers_per_shader_stage = 12;
+    Ok(adapter.request_device(&device_desc, None).await?)
 }
 
 pub unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
@@ -475,7 +506,7 @@ impl<'a> Dispatcher<'a> {
         Self::Direct(n_workgroups)
     }
 
-    pub fn new_indirect(device: &wgpu::Device, default: wgpu::util::DispatchIndirect) -> Self {
+    pub fn new_indirect(device: &wgpu::Device, default: wgpu::util::DispatchIndirectArgs) -> Self {
         let dispatcher = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: default.as_bytes(),
@@ -606,8 +637,9 @@ impl<'a> DebugEncoder<'a> {
             inspects,
             save_path,
             create_py,
-        }) = debug_bundle else {
-            return InspectStatus::NoDebugBundle
+        }) = debug_bundle
+        else {
+            return InspectStatus::NoDebugBundle;
         };
 
         let encoder =
