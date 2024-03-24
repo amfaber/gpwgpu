@@ -25,22 +25,41 @@ pub enum MemoryReq {
     Temporary,
 }
 
-#[derive(Debug, Clone)]
-pub struct AbstractBuffer<B: 'static + Hash + Eq + Clone + Copy + Debug> {
-    pub name: B,
+pub trait PipelineTypes: 'static {
+    type Params;
+    type Buffer: 'static + Hash + Eq + Clone + Copy + Debug;
+    type Error;
+    type Args;
+}
+
+#[derive(Debug)]
+pub struct AbstractBuffer<PT: PipelineTypes> {
+    pub name: PT::Buffer,
     pub memory_req: MemoryReq,
     pub usage: wgpu::BufferUsages,
     pub size: wgpu::BufferAddress,
 }
 
-#[derive(Debug)]
-pub struct ConcreteBuffer<B: 'static + Hash + Eq + Clone + Copy + Debug> {
-    pub size: u64,
-    pub usage: wgpu::BufferUsages,
-    pub currently_backing: Option<(AbstractBuffer<B>, bool)>,
+// Manual clone impl to avoid a Clone bound on PipelineTypes
+impl<PT: PipelineTypes> Clone for AbstractBuffer<PT>{
+    fn clone(&self) -> Self {
+        Self{
+            name: self.name.clone(),
+            memory_req: self.memory_req.clone(),
+            usage: self.usage.clone(),
+            size: self.size.clone(),
+        }
+    }
 }
 
-impl<B: 'static + Hash + Eq + Clone + Copy + Debug> ConcreteBuffer<B> {
+#[derive(Debug)]
+pub struct ConcreteBuffer<PT: PipelineTypes> {
+    pub size: u64,
+    pub usage: wgpu::BufferUsages,
+    pub currently_backing: Option<(AbstractBuffer<PT>, bool)>,
+}
+
+impl<PT: PipelineTypes> ConcreteBuffer<PT> {
     fn to_wgpu_buffer(&self, device: &wgpu::Device, idx: usize) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&idx.to_string()),
@@ -51,16 +70,16 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> ConcreteBuffer<B> {
     }
 }
 
-fn get_or_create_buffer<B>(
-    all_buffers: &mut Vec<ConcreteBuffer<B>>,
-    ab_buf: AbstractBuffer<B>,
+fn get_or_create_buffer<PT: PipelineTypes>(
+    all_buffers: &mut Vec<ConcreteBuffer<PT>>,
+    ab_buf: AbstractBuffer<PT>,
     uses_for_all: wgpu::BufferUsages,
-) where
-    B: 'static + Hash + Eq + Clone + Copy + Debug,
-{
+) {
     if !matches!(ab_buf.memory_req, MemoryReq::Temporary) {
         for buf in all_buffers.iter_mut() {
-            let Some((cur_backing_buf, _)) = &buf.currently_backing else { continue };
+            let Some((cur_backing_buf, _)) = &buf.currently_backing else {
+                continue;
+            };
             if !matches!(cur_backing_buf.memory_req, MemoryReq::Temporary)
                 && cur_backing_buf.name == ab_buf.name
             {
@@ -108,29 +127,29 @@ fn get_or_create_buffer<B>(
     }
 }
 
-struct MapAndTypeName<B: 'static + Hash + Eq + Clone + Copy + Debug> {
-    map: HashMap<B, (usize, AbstractBuffer<B>)>,
+struct MapAndTypeName<PT: PipelineTypes> {
+    map: HashMap<PT::Buffer, (usize, AbstractBuffer<PT>)>,
     type_name: &'static str,
 }
 
-pub struct BufferSolution<B: 'static + Hash + Eq + Clone + Copy + Debug> {
+pub struct BufferSolution<PT: PipelineTypes> {
     buffers: Vec<wgpu::Buffer>,
-    assignments: HashMap<TypeId, MapAndTypeName<B>>,
+    assignments: HashMap<TypeId, MapAndTypeName<PT>>,
     order: Vec<TypeId>,
-    pub planned_buffers: Vec<ConcreteBuffer<B>>,
+    pub planned_buffers: Vec<ConcreteBuffer<PT>>,
 }
 
-impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
+impl<PT: PipelineTypes> BufferSolution<PT> {
     pub fn new(
         // device: &wgpu::Device,
-        operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
+        operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>,
     ) -> Self {
         Self::new_internal(operations, wgpu::BufferUsages::empty())
     }
 
     pub fn new_dbg(
         // device: &wgpu::Device,
-        operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
+        operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>,
     ) -> Self {
         Self::new_internal(
             // device,
@@ -141,14 +160,14 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
 
     fn new_internal(
         // device: &wgpu::Device,
-        operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
+        operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>,
         uses_for_all: wgpu::BufferUsages,
     ) -> Self {
         // Representation of all the buffers we need to create
-        let mut all_buffers = Vec::<ConcreteBuffer<B>>::new();
+        let mut all_buffers = Vec::<ConcreteBuffer<PT>>::new();
 
         // For every named buffer, the index in operations that it is encountered for the last time
-        let mut last_usage = HashMap::<B, usize>::new();
+        let mut last_usage = HashMap::<PT::Buffer, usize>::new();
 
         // For every operation, a vec of the buffers that it has been assigned. u32 is the
         // binding in the bind group, while usize is an index to all_buffers.
@@ -234,21 +253,21 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
             .collect()
     }
 
-    pub fn try_position_get(&self, operation: usize, name: B) -> Option<&wgpu::Buffer> {
+    pub fn try_position_get(&self, operation: usize, name: PT::Buffer) -> Option<&wgpu::Buffer> {
         let id = self.order[operation];
         let &(idx, _) = self.assignments.get(&id)?.map.get(&name)?;
         Some(&self.buffers[idx])
     }
 
     #[track_caller]
-    pub fn position_get(&self, operation: usize, name: B) -> &wgpu::Buffer {
+    pub fn position_get(&self, operation: usize, name: PT::Buffer) -> &wgpu::Buffer {
         match self.try_position_get(operation, name) {
             Some(val) => val,
             None => panic!("{:?} not found in \n{:#?}\n", name, self),
         }
     }
 
-    pub fn try_get_size<T: Any>(&self, name: B) -> Option<wgpu::BufferAddress> {
+    pub fn try_get_size<T: Any>(&self, name: PT::Buffer) -> Option<wgpu::BufferAddress> {
         let MapAndTypeName { map, type_name: _ } =
             self.assignments.get(&std::any::TypeId::of::<T>())?;
         let (_idx, abs) = map.get(&name)?;
@@ -256,7 +275,7 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
     }
 
     #[track_caller]
-    pub fn get_size<T: Any>(&self, name: B) -> wgpu::BufferAddress {
+    pub fn get_size<T: Any>(&self, name: PT::Buffer) -> wgpu::BufferAddress {
         match self.try_get_size::<T>(name) {
             Some(val) => val,
             None => panic!(
@@ -268,7 +287,7 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
         }
     }
 
-    pub fn try_get<T: Any>(&self, name: B) -> Option<&wgpu::Buffer> {
+    pub fn try_get<T: Any>(&self, name: PT::Buffer) -> Option<&wgpu::Buffer> {
         let MapAndTypeName { map, type_name: _ } =
             self.assignments.get(&std::any::TypeId::of::<T>())?;
         let (idx, _) = *map.get(&name)?;
@@ -276,7 +295,7 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
     }
 
     #[track_caller]
-    pub fn get<T: Any>(&self, name: B) -> &wgpu::Buffer {
+    pub fn get<T: Any>(&self, name: PT::Buffer) -> &wgpu::Buffer {
         match self.try_get::<T>(name) {
             Some(val) => val,
             None => panic!(
@@ -288,7 +307,7 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
         }
     }
 
-    pub fn try_get_from_any(&self, name: B) -> Option<&wgpu::Buffer> {
+    pub fn try_get_from_any(&self, name: PT::Buffer) -> Option<&wgpu::Buffer> {
         let idx = self
             .assignments
             .iter()
@@ -297,19 +316,15 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
     }
 
     #[track_caller]
-    pub fn get_from_any(&self, name: B) -> &wgpu::Buffer{
+    pub fn get_from_any(&self, name: PT::Buffer) -> &wgpu::Buffer {
         match self.try_get_from_any(name) {
             Some(val) => val,
-            None => panic!(
-                "{:?} not found in \n{:#?}\n",
-                name,
-                self
-            ),
+            None => panic!("{:?} not found in \n{:#?}\n", name, self),
         }
     }
 
     #[track_caller]
-    pub fn get_bindgroup<T: Any>(&self) -> HashMap<B, &wgpu::Buffer> {
+    pub fn get_bindgroup<T: Any>(&self) -> HashMap<PT::Buffer, &wgpu::Buffer> {
         match self.try_get_bindgroup::<T>() {
             Some(val) => val,
             None => panic!(
@@ -320,7 +335,7 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
         }
     }
 
-    pub fn try_get_bindgroup<T: Any>(&self) -> Option<HashMap<B, &wgpu::Buffer>> {
+    pub fn try_get_bindgroup<T: Any>(&self) -> Option<HashMap<PT::Buffer, &wgpu::Buffer>> {
         let MapAndTypeName { map, type_name: _ } =
             self.assignments.get(&std::any::TypeId::of::<T>())?;
 
@@ -371,43 +386,45 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> BufferSolution<B> {
     }
 }
 
-type SetUpReturn<P, B, E, A> =
-    Result<Box<dyn SequentialOperation<Params = P, BufferEnum = B, Error = E, Args = A>>, E>;
+pub type PipelineParams<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Params;
 
-pub trait SequentialOperation: 'static + Debug + Any {
-    type Params;
-    type BufferEnum: 'static + Hash + Eq + Clone + Copy + Debug;
-    type Error;
-    type Args;
+// type InternalBuffer<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Buffer;
 
-    fn enabled(params: &Self::Params) -> bool
+pub type PipelineError<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Error;
+
+pub type PipelineArgs<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Args;
+
+pub trait SequentialOperation: 'static + Debug + Any + Send {
+    type PT: PipelineTypes;
+
+    fn enabled(params: &PipelineParams<Self>) -> bool
     where
         Self: Sized;
 
-    fn buffers(params: &Self::Params) -> Vec<AbstractBuffer<Self::BufferEnum>>
+    fn buffers(params: &PipelineParams<Self>) -> Vec<AbstractBuffer<Self::PT>>
     where
         Self: Sized;
 
     fn create(
         device: &wgpu::Device,
-        params: &Self::Params,
-        buffers: &BufferSolution<Self::BufferEnum>,
-    ) -> Result<Self, Self::Error>
+        params: &PipelineParams<Self>,
+        buffers: &BufferSolution<Self::PT>,
+    ) -> Result<Self, PipelineError<Self>>
     where
         Self: Sized;
 
     fn execute(
         &mut self,
         encoder: &mut Encoder,
-        buffers: &BufferSolution<Self::BufferEnum>,
-        args: &Self::Args,
+        buffers: &BufferSolution<Self::PT>,
+        args: &PipelineArgs<Self>,
     );
 
     fn set_up(
         device: &wgpu::Device,
-        params: &Self::Params,
-        buffers: &BufferSolution<Self::BufferEnum>,
-    ) -> SetUpReturn<Self::Params, Self::BufferEnum, Self::Error, Self::Args>
+        params: &PipelineParams<Self>,
+        buffers: &BufferSolution<Self::PT>,
+    ) -> Result<Box<dyn SequentialOperation<PT = Self::PT>>, PipelineError<Self>>
     where
         Self: Sized,
     {
@@ -415,8 +432,8 @@ pub trait SequentialOperation: 'static + Debug + Any {
     }
 
     fn type_id_and_buffers(
-        params: &Self::Params,
-    ) -> (TypeId, &'static str, Vec<AbstractBuffer<Self::BufferEnum>>)
+        params: &PipelineParams<Self>,
+    ) -> (TypeId, &'static str, Vec<AbstractBuffer<Self::PT>>)
     where
         Self: Sized,
     {
@@ -432,75 +449,100 @@ pub trait SequentialOperation: 'static + Debug + Any {
     }
 }
 
-fn enabled_callback<T: SequentialOperation>() -> Box<dyn Fn(&T::Params) -> bool> {
-    Box::new(T::enabled)
-}
+// fn enabled_callback<T: SequentialOperation>() -> Box<dyn Fn(&T::Params) -> bool> {
+//     Box::new(T::enabled)
+// }
 
-fn buffers_callback<T: SequentialOperation>(
-) -> Box<dyn Fn(&T::Params) -> (TypeId, &'static str, Vec<AbstractBuffer<T::BufferEnum>>)> {
-    Box::new(T::type_id_and_buffers)
-}
+// fn buffers_callback<T: SequentialOperation>(
+// ) -> Box<dyn Fn(&T::Params) -> (TypeId, &'static str, Vec<AbstractBuffer<T::BufferEnum>>)> {
+//     Box::new(T::type_id_and_buffers)
+// }
 
-fn set_up_callback<T: SequentialOperation>() -> Box<
-    dyn Fn(
+// fn set_up_callback<T: SequentialOperation>() -> Box<
+//     dyn Fn(
+//         &wgpu::Device,
+//         &T::Params,
+//         &BufferSolution<T::BufferEnum>,
+//     ) -> SetUpReturn<T::Params, T::BufferEnum, T::Error, T::Args>,
+// > {
+//     Box::new(T::set_up)
+// }
+
+// pub struct Operation<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E, A>(
+//     Box<dyn Fn(&P) -> bool>,
+//     Box<dyn Fn(&P) -> (TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
+//     Box<dyn Fn(&wgpu::Device, &P, &BufferSolution<B>) -> SetUpReturn<P, B, E, A>>,
+// );
+
+// pub fn register<S: SequentialOperation>() -> Operation<S::PT>
+// {
+//     Operation{
+//         enabled: S::enabled,
+//         buffers: S::,
+//         set_up: todo!(),
+//     }
+//     // Operation(
+//     //     enabled_callback::<T>(),
+//     //     buffers_callback::<T>(),
+//     //     set_up_callback::<T>(),
+//     // )
+// }
+
+pub struct Operation<PT: PipelineTypes> {
+    enabled: fn(&PT::Params) -> bool,
+    buffers: fn(&PT::Params) -> (TypeId, &'static str, Vec<AbstractBuffer<PT>>),
+    set_up: fn(
         &wgpu::Device,
-        &T::Params,
-        &BufferSolution<T::BufferEnum>,
-    ) -> SetUpReturn<T::Params, T::BufferEnum, T::Error, T::Args>,
-> {
-    Box::new(T::set_up)
+        &PT::Params,
+        &BufferSolution<PT>,
+    ) -> Result<Box<dyn SequentialOperation<PT = PT>>, PT::Error>,
 }
 
-pub struct Operation<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E, A>(
-    Box<dyn Fn(&P) -> bool>,
-    Box<dyn Fn(&P) -> (TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
-    Box<dyn Fn(&wgpu::Device, &P, &BufferSolution<B>) -> SetUpReturn<P, B, E, A>>,
-);
-
-pub fn register<T: SequentialOperation>() -> Operation<T::Params, T::BufferEnum, T::Error, T::Args>
-{
-    Operation(
-        enabled_callback::<T>(),
-        buffers_callback::<T>(),
-        set_up_callback::<T>(),
-    )
+impl<PT: PipelineTypes> Operation<PT> {
+    pub fn new<S>() -> Self
+    where
+        S: SequentialOperation<PT = PT>,
+    {
+        Self {
+            enabled: S::enabled,
+            buffers: S::type_id_and_buffers,
+            set_up: S::set_up,
+        }
+    }
 }
 
-pub struct AllOperations<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E, A> {
-    pub buffers: BufferSolution<B>,
+pub struct AllOperations<PT: PipelineTypes> {
+    pub buffers: BufferSolution<PT>,
 
     // Cell to allow each operation to mutate their own state while having outstanding refs to
     // buffers owned by self.
-    pub operations:
-        Cell<Vec<Box<dyn SequentialOperation<Params = P, BufferEnum = B, Error = E, Args = A>>>>,
+    pub operations: Cell<Vec<Box<dyn SequentialOperation<PT = PT>>>>,
 
-    calls: Vec<Operation<P, B, E, A>>,
+    calls: Vec<Operation<PT>>,
 }
 
-impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: 'static>
-    AllOperations<P, B, E, A>
-{
+impl<PT: PipelineTypes> AllOperations<PT> {
     pub fn new(
         // device: &wgpu::Device,
-        params: &P,
-        operations: Vec<Operation<P, B, E, A>>,
-    ) -> Result<Self, E> {
+        params: &PT::Params,
+        operations: Vec<Operation<PT>>,
+    ) -> Result<Self, PT::Error> {
         Self::new_internal(params, operations, false)
     }
 
     pub fn new_dbg(
         // device: &wgpu::Device,
-        params: &P,
-        operations: Vec<Operation<P, B, E, A>>,
-    ) -> Result<Self, E> {
+        params: &PT::Params,
+        operations: Vec<Operation<PT>>,
+    ) -> Result<Self, PT::Error> {
         Self::new_internal(params, operations, true)
     }
 
     fn new_internal(
-        params: &P,
-        operations: Vec<Operation<P, B, E, A>>,
+        params: &PT::Params,
+        operations: Vec<Operation<PT>>,
         dbg: bool,
-    ) -> Result<Self, E> {
+    ) -> Result<Self, PT::Error> {
         let mut all_buffers = Vec::new();
         // let mut set_up_callbacks = Vec::new();
         // for Operation(enabled, buffers, set_up) in operations {
@@ -511,13 +553,19 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         // }
         let ops = operations
             .into_iter()
-            .filter(|Operation(enabled, buffers, _set_up)| {
-                let enabled = enabled(params);
-                if enabled {
-                    all_buffers.push(buffers(params));
-                }
-                enabled
-            })
+            .filter(
+                |Operation {
+                     enabled,
+                     buffers,
+                     set_up: _set_up,
+                 }| {
+                    let enabled = enabled(params);
+                    if enabled {
+                        all_buffers.push(buffers(params));
+                    }
+                    enabled
+                },
+            )
             .collect::<Vec<_>>();
 
         let buffers = if dbg {
@@ -533,9 +581,14 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         })
     }
 
-    pub fn reinitialize(&mut self, params: &P, dbg: bool) {
+    pub fn reinitialize(&mut self, params: &PT::Params, dbg: bool) {
         let mut all_buffers = Vec::new();
-        for Operation(enabled, buffers, _set_up) in self.calls.iter() {
+        for Operation {
+            enabled,
+            buffers,
+            set_up: _,
+        } in self.calls.iter()
+        {
             let enabled = enabled(params);
             if enabled {
                 all_buffers.push(buffers(params));
@@ -549,19 +602,29 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         self.buffers = buffers;
     }
 
-    pub fn finalize(&mut self, device: &wgpu::Device, params: &P) -> Result<(), E> {
+    pub fn finalize(
+        &mut self,
+        device: &wgpu::Device,
+        params: &PT::Params,
+    ) -> Result<(), PT::Error> {
         self.buffers.allocate(device);
         let operations = self
             .calls
             .iter()
-            .map(|Operation(_enabled, _buffers, set_up)| set_up(device, params, &self.buffers))
+            .map(
+                |Operation {
+                     enabled: _,
+                     buffers: _,
+                     set_up,
+                 }| set_up(device, params, &self.buffers),
+            )
             .collect::<Result<Vec<_>, _>>()?;
 
         self.operations.set(operations);
         Ok(())
     }
 
-    pub fn execute(&self, encoder: &mut Encoder, args: &A) {
+    pub fn execute(&self, encoder: &mut Encoder, args: &PT::Args) {
         let mut operations = self.operations.take();
         for operation in operations.iter_mut() {
             operation.execute(encoder, &self.buffers, args);
@@ -569,7 +632,11 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         self.operations.set(operations);
     }
 
-    pub fn execute_with_inspect<'a, T: 'static>(&'a self, encoder: &'a mut Encoder<'a>, args: &A) {
+    pub fn execute_with_inspect<'a, T: 'static>(
+        &'a self,
+        encoder: &'a mut Encoder<'a>,
+        args: &PT::Args,
+    ) {
         let mut operations = self.operations.take();
         let mut type_found = false;
         let mut type_names = Vec::new();
@@ -579,7 +646,14 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
             let (id, name) = operation.my_type_id();
             if id == std::any::TypeId::of::<T>() {
                 type_found = true;
-                let DebugEncoder{ encoder: _, debug_bundle: Some(debug_bundle), debug_active } = encoder else { panic!("A debug bundle should be passed when using 'execute_with_inspect'") };
+                let DebugEncoder {
+                    encoder: _,
+                    debug_bundle: Some(debug_bundle),
+                    debug_active,
+                } = encoder
+                else {
+                    panic!("A debug bundle should be passed when using 'execute_with_inspect'")
+                };
                 if !debug_active.0 {
                     continue;
                 }
@@ -616,7 +690,14 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
         }
 
         if !type_found {
-            let DebugEncoder{ encoder: _, debug_bundle: Some(debug_bundle), debug_active: _ } = encoder else { panic!("A debug bundle should be passed when using 'execute_with_inspect'") };
+            let DebugEncoder {
+                encoder: _,
+                debug_bundle: Some(debug_bundle),
+                debug_active: _,
+            } = encoder
+            else {
+                panic!("A debug bundle should be passed when using 'execute_with_inspect'")
+            };
             let mut new_encoder = debug_bundle
                 .device
                 .create_command_encoder(&Default::default());
@@ -631,7 +712,7 @@ impl<P: 'static, B: 'static + Hash + Eq + Clone + Copy + Debug, E: 'static, A: '
     }
 }
 
-impl<B: 'static + Hash + Eq + Clone + Copy + Debug> Debug for MapAndTypeName<B> {
+impl<PT: PipelineTypes> Debug for MapAndTypeName<PT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_map()
             .entries({
@@ -648,7 +729,7 @@ impl<B: 'static + Hash + Eq + Clone + Copy + Debug> Debug for MapAndTypeName<B> 
     }
 }
 
-impl<B: 'static + Hash + Eq + Clone + Copy + Debug> Debug for BufferSolution<B> {
+impl<PT: PipelineTypes> Debug for BufferSolution<PT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list()
             .entries(self.buffers.iter().enumerate().map(|(i, buf)| {
