@@ -2,7 +2,14 @@ use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
 use std::{
-    borrow::Cow, collections::HashMap, fmt::Write, mem::size_of, ops::{Bound, Deref, DerefMut}, path::{Path, PathBuf}, sync::Arc, time::{Duration, Instant}
+    borrow::Cow,
+    collections::HashMap,
+    fmt::Write,
+    mem::size_of,
+    ops::{Bound, Deref, DerefMut},
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use wgpu::{self, util::DeviceExt, CommandEncoder, RequestAdapterOptions, MAP_ALIGNMENT};
 

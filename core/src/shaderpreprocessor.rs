@@ -19,7 +19,12 @@ use crate::{
 };
 use pollster::FutureExt;
 use std::{
-    borrow::Cow, collections::{BTreeMap, HashMap}, fmt::Write, fs::DirEntry, path::Path, sync::Arc
+    borrow::Cow,
+    collections::{BTreeMap, HashMap},
+    fmt::Write,
+    fs::DirEntry,
+    path::Path,
+    sync::Arc,
 };
 
 #[derive(Debug)]
@@ -163,7 +168,7 @@ pub enum ShaderError {
     },
 }
 
-impl std::fmt::Debug for ShaderError{
+impl std::fmt::Debug for ShaderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = self.to_string();
         f.write_str(&s)
@@ -178,7 +183,7 @@ pub struct ProcessedShader<'def> {
     pub specs: ShaderSpecs<'def>,
 }
 
-fn format_shader(shader: &str) -> String{
+fn format_shader(shader: &str) -> String {
     let mut s = "\n".to_string();
 
     let n_lines = shader.lines().count() as f32;
