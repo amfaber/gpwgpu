@@ -1,9 +1,5 @@
 use std::{
-    any::{self, type_name, Any, TypeId},
-    cell::Cell,
-    collections::HashMap,
-    fmt::Debug,
-    hash::Hash,
+    any::{self, type_name, Any, TypeId}, collections::HashMap, fmt::Debug, hash::Hash, sync::Mutex
 };
 
 use crate::utils::{DebugEncoder, Encoder, InspectBuffer};
@@ -141,25 +137,21 @@ pub struct BufferSolution<PT: PipelineTypes> {
 
 impl<PT: PipelineTypes> BufferSolution<PT> {
     pub fn new(
-        // device: &wgpu::Device,
         operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>,
     ) -> Self {
         Self::new_internal(operations, wgpu::BufferUsages::empty())
     }
 
     pub fn new_dbg(
-        // device: &wgpu::Device,
         operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>,
     ) -> Self {
         Self::new_internal(
-            // device,
             operations,
             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         )
     }
 
     fn new_internal(
-        // device: &wgpu::Device,
         operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>,
         uses_for_all: wgpu::BufferUsages,
     ) -> Self {
@@ -229,12 +221,6 @@ impl<PT: PipelineTypes> BufferSolution<PT> {
                 },
             );
         }
-
-        // let buffers = all_buffers
-        //     .into_iter()
-        //     .enumerate()
-        //     .map(|(i, buf)| buf.to_wgpu_buffer(device, i))
-        //     .collect();
 
         Self {
             buffers: Vec::new(),
@@ -388,8 +374,6 @@ impl<PT: PipelineTypes> BufferSolution<PT> {
 
 pub type PipelineParams<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Params;
 
-// type InternalBuffer<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Buffer;
-
 pub type PipelineError<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Error;
 
 pub type PipelineArgs<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Args;
@@ -449,45 +433,6 @@ pub trait SequentialOperation: 'static + Debug + Any + Send {
     }
 }
 
-// fn enabled_callback<T: SequentialOperation>() -> Box<dyn Fn(&T::Params) -> bool> {
-//     Box::new(T::enabled)
-// }
-
-// fn buffers_callback<T: SequentialOperation>(
-// ) -> Box<dyn Fn(&T::Params) -> (TypeId, &'static str, Vec<AbstractBuffer<T::BufferEnum>>)> {
-//     Box::new(T::type_id_and_buffers)
-// }
-
-// fn set_up_callback<T: SequentialOperation>() -> Box<
-//     dyn Fn(
-//         &wgpu::Device,
-//         &T::Params,
-//         &BufferSolution<T::BufferEnum>,
-//     ) -> SetUpReturn<T::Params, T::BufferEnum, T::Error, T::Args>,
-// > {
-//     Box::new(T::set_up)
-// }
-
-// pub struct Operation<P, B: 'static + Hash + Eq + Clone + Copy + Debug, E, A>(
-//     Box<dyn Fn(&P) -> bool>,
-//     Box<dyn Fn(&P) -> (TypeId, &'static str, Vec<AbstractBuffer<B>>)>,
-//     Box<dyn Fn(&wgpu::Device, &P, &BufferSolution<B>) -> SetUpReturn<P, B, E, A>>,
-// );
-
-// pub fn register<S: SequentialOperation>() -> Operation<S::PT>
-// {
-//     Operation{
-//         enabled: S::enabled,
-//         buffers: S::,
-//         set_up: todo!(),
-//     }
-//     // Operation(
-//     //     enabled_callback::<T>(),
-//     //     buffers_callback::<T>(),
-//     //     set_up_callback::<T>(),
-//     // )
-// }
-
 pub struct Operation<PT: PipelineTypes> {
     enabled: fn(&PT::Params) -> bool,
     buffers: fn(&PT::Params) -> (TypeId, &'static str, Vec<AbstractBuffer<PT>>),
@@ -516,7 +461,7 @@ pub struct AllOperations<PT: PipelineTypes> {
 
     // Cell to allow each operation to mutate their own state while having outstanding refs to
     // buffers owned by self.
-    pub operations: Cell<Vec<Box<dyn SequentialOperation<PT = PT>>>>,
+    pub operations: Mutex<Vec<Box<dyn SequentialOperation<PT = PT>>>>,
 
     calls: Vec<Operation<PT>>,
 }
@@ -577,7 +522,7 @@ impl<PT: PipelineTypes> AllOperations<PT> {
         Ok(Self {
             buffers,
             calls: ops,
-            operations: Cell::new(Vec::new()),
+            operations: Mutex::new(Vec::new()),
         })
     }
 
@@ -620,16 +565,17 @@ impl<PT: PipelineTypes> AllOperations<PT> {
             )
             .collect::<Result<Vec<_>, _>>()?;
 
-        self.operations.set(operations);
+        *self.operations.lock().unwrap() = operations;
+        // self.operations.set(operations);
         Ok(())
     }
 
     pub fn execute(&self, encoder: &mut Encoder, args: &PT::Args) {
-        let mut operations = self.operations.take();
+        let mut operations = self.operations.lock().unwrap();
         for operation in operations.iter_mut() {
             operation.execute(encoder, &self.buffers, args);
         }
-        self.operations.set(operations);
+        // self.operations.(operations);
     }
 
     pub fn execute_with_inspect<'a, T: 'static>(
@@ -637,7 +583,7 @@ impl<PT: PipelineTypes> AllOperations<PT> {
         encoder: &'a mut Encoder<'a>,
         args: &PT::Args,
     ) {
-        let mut operations = self.operations.take();
+        let mut operations = self.operations.lock().unwrap();
         let mut type_found = false;
         let mut type_names = Vec::new();
         encoder.activate();
