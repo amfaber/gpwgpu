@@ -1,4 +1,4 @@
-use std::{rc::Rc, ops::Deref};
+use std::{ops::Deref, sync::Arc};
 
 use bytemuck::Pod;
 #[allow(unused)]
@@ -44,9 +44,9 @@ pub struct SeparableConvolution<const N: usize>{
 impl<const N: usize> SeparableConvolution<N>{
     pub fn from_three_pipelines<'buf, 'proc>(
         device: &wgpu::Device,
-        first_pipeline: Rc<NonBoundPipeline>,
-        pipeline: Rc<NonBoundPipeline>,
-        last_pipeline: Rc<NonBoundPipeline>,
+        first_pipeline: Arc<NonBoundPipeline>,
+        pipeline: Arc<NonBoundPipeline>,
+        last_pipeline: Arc<NonBoundPipeline>,
         // dims: [i32; N],
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
@@ -67,7 +67,7 @@ impl<const N: usize> SeparableConvolution<N>{
                 .enumerate()
                 .map(|(i, buffer)| ((i + 2) as u32, buffer))
             );
-            FullComputePass::new(device, Rc::clone(&first_pipeline), &bindgroup)
+            FullComputePass::new(device, Arc::clone(&first_pipeline), &bindgroup)
         };
 
         let temp_pass = {
@@ -76,7 +76,7 @@ impl<const N: usize> SeparableConvolution<N>{
                 .enumerate()
                 .map(|(i, buffer)| ((i + 2) as u32, buffer))
             );
-            FullComputePass::new(device, Rc::clone(&pipeline), &bindgroup)
+            FullComputePass::new(device, Arc::clone(&pipeline), &bindgroup)
         };
 
         let output_pass = {
@@ -85,7 +85,7 @@ impl<const N: usize> SeparableConvolution<N>{
                 .enumerate()
                 .map(|(i, buffer)| ((i + 2) as u32, buffer))
             );
-            FullComputePass::new(device, Rc::clone(&pipeline), &bindgroup)
+            FullComputePass::new(device, Arc::clone(&pipeline), &bindgroup)
         };
 
         let last_pass = {
@@ -94,7 +94,7 @@ impl<const N: usize> SeparableConvolution<N>{
                 .enumerate()
                 .map(|(i, buffer)| ((i + 2) as u32, buffer))
             );
-            FullComputePass::new(device, Rc::clone(&last_pipeline), &bindgroup)
+            FullComputePass::new(device, Arc::clone(&last_pipeline), &bindgroup)
         };
 
         let temp_passes = if N % 2 == 0{
@@ -113,7 +113,7 @@ impl<const N: usize> SeparableConvolution<N>{
     
     pub fn from_pipeline<'buf, 'proc>(
         device: &wgpu::Device,
-        pipeline: Rc<NonBoundPipeline>,
+        pipeline: Arc<NonBoundPipeline>,
         // dims: [i32; N],
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
@@ -122,8 +122,8 @@ impl<const N: usize> SeparableConvolution<N>{
     ) -> Self {
         Self::from_three_pipelines(
             device,
-            Rc::clone(&pipeline),
-            Rc::clone(&pipeline),
+            Arc::clone(&pipeline),
+            Arc::clone(&pipeline),
             pipeline,
             // dims,
             input,
@@ -177,7 +177,7 @@ impl<const N: usize> GaussianSmoothing<N> {
     pub fn pipeline(
         device: &wgpu::Device,
         dims: [i32; N],
-    ) -> Result<Rc<NonBoundPipeline>, ShaderError> {
+    ) -> Result<Arc<NonBoundPipeline>, ShaderError> {
         let extra_pushconstants = "sigma: f32,";
         let init = "let sigma2 = pow(pc.sigma, 2.0);";
         let kernel_func = "\
@@ -211,7 +211,7 @@ impl<const N: usize> GaussianSmoothing<N> {
     pub fn from_pipeline(
         device: &wgpu::Device,
         // dims: [i32; N],
-        pipeline: Rc<NonBoundPipeline>,
+        pipeline: Arc<NonBoundPipeline>,
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
         output: &wgpu::Buffer,
@@ -282,7 +282,7 @@ impl<'a, const N: usize> GaussianLaplace<'a, N>{
     pub fn pipeline(
         device: &wgpu::Device,
         dims: [i32; N],
-    ) -> Result<Rc<NonBoundPipeline>, ShaderError> {
+    ) -> Result<Arc<NonBoundPipeline>, ShaderError> {
         
         let extra_pushconstants = "sigma: f32,\ndiff: i32,\nlast: i32";
         let init = "let sigma2 = pow(pc.sigma, 2.0);";
@@ -335,7 +335,7 @@ var<storage, read_write> final_output: array<f32>;";
     pub fn from_pipeline(
         device: &wgpu::Device,
         // dims: [i32; N],
-        pipeline: Rc<NonBoundPipeline>,
+        pipeline: Arc<NonBoundPipeline>,
         input: &wgpu::Buffer,
         temp: &wgpu::Buffer,
         temp2: &wgpu::Buffer,

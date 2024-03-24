@@ -2,14 +2,7 @@ use once_cell::sync::Lazy;
 // use crate::gpu_setup::GpuState;
 use regex::{self, Regex};
 use std::{
-    borrow::Cow,
-    collections::HashMap,
-    fmt::Write,
-    mem::size_of,
-    ops::{Bound, Deref, DerefMut},
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::{Duration, Instant},
+    borrow::Cow, collections::HashMap, fmt::Write, mem::size_of, ops::{Bound, Deref, DerefMut}, path::{Path, PathBuf}, sync::Arc, time::{Duration, Instant}
 };
 use wgpu::{self, util::DeviceExt, CommandEncoder, RequestAdapterOptions, MAP_ALIGNMENT};
 
@@ -489,7 +482,7 @@ pub struct IndirectDispatcher {
 #[derive(Debug, Clone)]
 pub enum Dispatcher<'a> {
     Direct([u32; 3]),
-    Indirect(Rc<IndirectDispatcher>),
+    Indirect(Arc<IndirectDispatcher>),
     IndirectBorrowed {
         dispatcher: &'a wgpu::Buffer,
         resetter: &'a wgpu::Buffer,
@@ -522,7 +515,7 @@ impl<'a> Dispatcher<'a> {
             usage: wgpu::BufferUsages::COPY_SRC,
         });
 
-        Self::Indirect(Rc::new(IndirectDispatcher {
+        Self::Indirect(Arc::new(IndirectDispatcher {
             dispatcher,
             resetter,
         }))
@@ -728,13 +721,13 @@ pub type Encoder<'a> = DebugEncoder<'a>;
 #[derive(Debug)]
 pub struct FullComputePass {
     pub bindgroup: wgpu::BindGroup,
-    pub pipeline: Rc<NonBoundPipeline>,
+    pub pipeline: Arc<NonBoundPipeline>,
 }
 
 impl FullComputePass {
     pub fn new<'a>(
         device: &wgpu::Device,
-        pipeline: Rc<NonBoundPipeline>,
+        pipeline: Arc<NonBoundPipeline>,
         bindgroup: &impl BindingGroup,
     ) -> Self {
         let bindgroup = bindgroup.binding_group(

@@ -19,12 +19,7 @@ use crate::{
 };
 use pollster::FutureExt;
 use std::{
-    borrow::Cow,
-    collections::{BTreeMap, HashMap},
-    fmt::Write,
-    fs::DirEntry,
-    path::Path,
-    rc::Rc,
+    borrow::Cow, collections::{BTreeMap, HashMap}, fmt::Write, fs::DirEntry, path::Path, sync::Arc
 };
 
 #[derive(Debug)]
@@ -208,7 +203,7 @@ impl<'def> ProcessedShader<'def> {
         &self.source
     }
 
-    pub fn build(self, device: &wgpu::Device) -> Result<Rc<NonBoundPipeline>, ShaderError> {
+    pub fn build(self, device: &wgpu::Device) -> Result<Arc<NonBoundPipeline>, ShaderError> {
         let Self { source, specs } = self;
 
         let mut bind_group_layout =
@@ -258,7 +253,7 @@ impl<'def> ProcessedShader<'def> {
             });
         }
 
-        Ok(Rc::new(NonBoundPipeline {
+        Ok(Arc::new(NonBoundPipeline {
             label: specs.shader_label,
             compute_pipeline,
             // Multiple binding groups are half baked right now. FullComputePass assumes 1,
