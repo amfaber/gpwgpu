@@ -378,7 +378,7 @@ pub type PipelineError<S> = <<S as SequentialOperation>::PT as PipelineTypes>::E
 
 pub type PipelineArgs<S> = <<S as SequentialOperation>::PT as PipelineTypes>::Args;
 
-pub trait SequentialOperation: 'static + Debug + Any + Send {
+pub trait SequentialOperation: 'static + Debug + Any + Send + Sync {
     type PT: PipelineTypes;
 
     fn enabled(params: &PipelineParams<Self>) -> bool
@@ -459,16 +459,14 @@ impl<PT: PipelineTypes> Operation<PT> {
 pub struct AllOperations<PT: PipelineTypes> {
     pub buffers: BufferSolution<PT>,
 
-    // Cell to allow each operation to mutate their own state while having outstanding refs to
-    // buffers owned by self.
-    pub operations: Mutex<Vec<Box<dyn SequentialOperation<PT = PT>>>>,
+    pub operations: Vec<Box<dyn SequentialOperation<PT = PT>>>,
+    // pub operations: Mutex<Vec<Box<dyn SequentialOperation<PT = PT>>>>,
 
     calls: Vec<Operation<PT>>,
 }
 
 impl<PT: PipelineTypes> AllOperations<PT> {
     pub fn new(
-        // device: &wgpu::Device,
         params: &PT::Params,
         operations: Vec<Operation<PT>>,
     ) -> Result<Self, PT::Error> {
@@ -476,7 +474,6 @@ impl<PT: PipelineTypes> AllOperations<PT> {
     }
 
     pub fn new_dbg(
-        // device: &wgpu::Device,
         params: &PT::Params,
         operations: Vec<Operation<PT>>,
     ) -> Result<Self, PT::Error> {
@@ -489,13 +486,6 @@ impl<PT: PipelineTypes> AllOperations<PT> {
         dbg: bool,
     ) -> Result<Self, PT::Error> {
         let mut all_buffers = Vec::new();
-        // let mut set_up_callbacks = Vec::new();
-        // for Operation(enabled, buffers, set_up) in operations {
-        //     if enabled(params) {
-        //         all_buffers.push(buffers(params));
-        //         set_up_callbacks.push(set_up);
-        //     }
-        // }
         let ops = operations
             .into_iter()
             .filter(
@@ -522,7 +512,8 @@ impl<PT: PipelineTypes> AllOperations<PT> {
         Ok(Self {
             buffers,
             calls: ops,
-            operations: Mutex::new(Vec::new()),
+            operations: Vec::new(),
+            // operations: Mutex::new(Vec::new()),
         })
     }
 
@@ -565,29 +556,28 @@ impl<PT: PipelineTypes> AllOperations<PT> {
             )
             .collect::<Result<Vec<_>, _>>()?;
 
-        *self.operations.lock().unwrap() = operations;
-        // self.operations.set(operations);
+        // *self.operations.lock().unwrap() = operations;
+        self.operations = operations;
         Ok(())
     }
 
-    pub fn execute(&self, encoder: &mut Encoder, args: &PT::Args) {
-        let mut operations = self.operations.lock().unwrap();
-        for operation in operations.iter_mut() {
+    pub fn execute(&mut self, encoder: &mut Encoder, args: &PT::Args) {
+        // let mut operations = self.operations.lock().unwrap();
+        for operation in self.operations.iter_mut() {
             operation.execute(encoder, &self.buffers, args);
         }
-        // self.operations.(operations);
     }
 
     pub fn execute_with_inspect<'a, T: 'static>(
-        &'a self,
+        &'a mut self,
         encoder: &'a mut Encoder<'a>,
         args: &PT::Args,
     ) {
-        let mut operations = self.operations.lock().unwrap();
+        // let mut operations = self.operations.lock().unwrap();
         let mut type_found = false;
         let mut type_names = Vec::new();
         encoder.activate();
-        for operation in operations.iter_mut() {
+        for operation in self.operations.iter_mut() {
             operation.execute(encoder, &self.buffers, args);
             let (id, name) = operation.my_type_id();
             if id == std::any::TypeId::of::<T>() {
@@ -696,4 +686,22 @@ impl<PT: PipelineTypes> Debug for BufferSolution<PT> {
             }))
             .finish()
     }
+}
+
+#[test]
+fn compile_check(){
+    fn test<T: Send + Sync>(){
+        
+    }
+    struct Pt;
+    impl PipelineTypes for Pt{
+        type Params = ();
+
+        type Buffer = ();
+
+        type Error = ();
+
+        type Args = ();
+    }
+    test::<AllOperations<Pt>>();
 }
