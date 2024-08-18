@@ -1,5 +1,8 @@
 use std::{
-    any::{self, type_name, Any, TypeId}, collections::HashMap, fmt::Debug, hash::Hash, sync::Mutex
+    any::{self, type_name, Any, TypeId},
+    collections::HashMap,
+    fmt::Debug,
+    hash::Hash,
 };
 
 use crate::utils::{DebugEncoder, Encoder, InspectBuffer};
@@ -37,9 +40,9 @@ pub struct AbstractBuffer<PT: PipelineTypes> {
 }
 
 // Manual clone impl to avoid a Clone bound on PipelineTypes
-impl<PT: PipelineTypes> Clone for AbstractBuffer<PT>{
+impl<PT: PipelineTypes> Clone for AbstractBuffer<PT> {
     fn clone(&self) -> Self {
-        Self{
+        Self {
             name: self.name.clone(),
             memory_req: self.memory_req.clone(),
             usage: self.usage.clone(),
@@ -136,15 +139,11 @@ pub struct BufferSolution<PT: PipelineTypes> {
 }
 
 impl<PT: PipelineTypes> BufferSolution<PT> {
-    pub fn new(
-        operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>,
-    ) -> Self {
+    pub fn new(operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>) -> Self {
         Self::new_internal(operations, wgpu::BufferUsages::empty())
     }
 
-    pub fn new_dbg(
-        operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>,
-    ) -> Self {
+    pub fn new_dbg(operations: Vec<(TypeId, &'static str, Vec<AbstractBuffer<PT>>)>) -> Self {
         Self::new_internal(
             operations,
             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
@@ -461,22 +460,15 @@ pub struct AllOperations<PT: PipelineTypes> {
 
     pub operations: Vec<Box<dyn SequentialOperation<PT = PT>>>,
     // pub operations: Mutex<Vec<Box<dyn SequentialOperation<PT = PT>>>>,
-
     calls: Vec<Operation<PT>>,
 }
 
 impl<PT: PipelineTypes> AllOperations<PT> {
-    pub fn new(
-        params: &PT::Params,
-        operations: Vec<Operation<PT>>,
-    ) -> Result<Self, PT::Error> {
+    pub fn new(params: &PT::Params, operations: Vec<Operation<PT>>) -> Result<Self, PT::Error> {
         Self::new_internal(params, operations, false)
     }
 
-    pub fn new_dbg(
-        params: &PT::Params,
-        operations: Vec<Operation<PT>>,
-    ) -> Result<Self, PT::Error> {
+    pub fn new_dbg(params: &PT::Params, operations: Vec<Operation<PT>>) -> Result<Self, PT::Error> {
         Self::new_internal(params, operations, true)
     }
 
@@ -689,12 +681,10 @@ impl<PT: PipelineTypes> Debug for BufferSolution<PT> {
 }
 
 #[test]
-fn compile_check(){
-    fn test<T: Send + Sync>(){
-        
-    }
+fn compile_check() {
+    fn test<T: Send + Sync>() {}
     struct Pt;
-    impl PipelineTypes for Pt{
+    impl PipelineTypes for Pt {
         type Params = ();
 
         type Buffer = ();
