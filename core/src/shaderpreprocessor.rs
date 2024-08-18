@@ -250,6 +250,7 @@ impl<'def> ProcessedShader<'def> {
             layout: Some(&pipelinelayout),
             module: &shader,
             entry_point: specs.entry_point.as_deref().unwrap_or("main"),
+            compilation_options: Default::default(),
         });
         if let Some(err) = device.pop_error_scope().block_on() {
             return Err(ShaderError::ValidationError {

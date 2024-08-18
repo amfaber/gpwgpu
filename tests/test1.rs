@@ -142,7 +142,6 @@ fn max() {
             &inp,
             Some(&temp),
             &output,
-            // (2 * n) as _,
             ty,
             false,
             8,
@@ -157,7 +156,6 @@ fn max() {
         )
         .unwrap();
 
-        // let mut encoder = device.create_command_encoder(&Default::default());
         let mut encoder = Encoder::new(&device);
 
         reduction.execute(&mut encoder, 2 * n as u32, &[]);
@@ -250,7 +248,7 @@ fn max_vec4() {
         queue.submit(Some(encoder.finish()));
         device.poll(wgpu::MaintainBase::Wait);
         let result: [f32; 4] = read_buffer(&device, &output, 0, None)[0];
-        dbg!(result);
+        // dbg!(result);
         // assert!((result - cpu_result).abs() < 0.0001);
     };
 
@@ -513,8 +511,8 @@ fn laplace() {
     });
 
     let laplace = GaussianLaplace::new(&device, shape, &inp, &temp, &temp2, &out).unwrap();
-    // let mut encoder = device.create_command_encoder(&Default::default());
     let mut encoder = Encoder::new(&device);
+    encoder.activate();
     encoder.set_debug_bundle(DebugBundle {
         device: &device,
         queue: &queue,
