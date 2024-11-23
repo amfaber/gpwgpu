@@ -307,6 +307,7 @@ fn gaussian_smoothing_2d() {
         save_path: "tests/dumps".into(),
         create_py: false,
     });
+    encoder.activate();
     smoothing.execute(&mut encoder, shape, [5.0; 2]);
     encoder.inspect_buffers().unwrap();
 }
@@ -456,7 +457,7 @@ import numpy as np
 import tifffile
 arr = np.fromfile("tests/dumps/3d_smoothed.bin", dtype = "float32").reshape({shape0}, {shape1}, {shape2})
 arr = arr.astype("uint16")
-tifffile.imsave("tests/dumps/3d_smoothed.tif", arr)"#
+tifffile.imwrite("tests/dumps/3d_smoothed.tif", arr)"#
         )).status().unwrap();
 }
 
