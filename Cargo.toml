@@ -2,7 +2,7 @@
 members = ["macros", "core"]
 
 [workspace.dependencies]
-wgpu = "0.20.1"
+wgpu = "23"
 bytemuck = { version = "1.12.1", features = ["derive"] }
 once_cell = "1.18.0"
 quote = "1.0.28"
@@ -14,7 +14,7 @@ pollster = "0.3.0"
 
 [package]
 name = "gpwgpu"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "A crate intended to make it easier to do general purpose GPU programming (GPGPU) in wgpu."

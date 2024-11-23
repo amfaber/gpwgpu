@@ -249,8 +249,9 @@ impl<'def> ProcessedShader<'def> {
             label: specs.pipeline_label.as_deref(),
             layout: Some(&pipelinelayout),
             module: &shader,
-            entry_point: specs.entry_point.as_deref().unwrap_or("main"),
+            entry_point: specs.entry_point.as_deref(),
             compilation_options: Default::default(),
+            cache: None,
         });
         if let Some(err) = device.pop_error_scope().block_on() {
             return Err(ShaderError::ValidationError {
