@@ -1,13 +1,13 @@
 [package]
 name = "gpwgpu_macros"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Macros for the gpwgpu crate"
 
 
 [dependencies]
-gpwgpu_core = { path = "../core", version = "0.1.0" }
+gpwgpu_core = { path = "../core", version = "0.2.0" }
 proc-macro2 = "1.0.62"
 quote.workspace = true
 syn.workspace = true
