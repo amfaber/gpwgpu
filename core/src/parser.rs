@@ -1,8 +1,5 @@
-// use std::collections::HashMap;
-
 use std::{borrow::Cow, collections::{HashMap, hash_map::Entry}, fmt::Write};
 
-// use crate::shaderpreprocessor::*;
 use nom::{
     branch::alt,
     bytes::complete::{take_till, take_till1, take_until},
@@ -94,14 +91,14 @@ impl<'a> Expr<'a> {
 
     pub fn simplify(
         self,
-        lookup: impl Fn(Cow<'a, str>) -> Option<Expr>,
+        lookup: impl Fn(Cow<'a, str>) -> Option<Expr<'a>>,
     ) -> Result<Expr<'a>, EvalError> {
         self.simplify_internal(&lookup)
     }
 
     fn simplify_internal(
         self,
-        lookup: &impl Fn(Cow<'a, str>) -> Option<Expr>,
+        lookup: &impl Fn(Cow<'a, str>) -> Option<Expr<'a>>,
     ) -> Result<Expr<'a>, EvalError> {
         use Expr::*;
         let out = match self {
@@ -390,10 +387,6 @@ fn parse_comparison(input: &str) -> IResult<&str, Expr, NomError> {
         0 => return Ok((input, initial)),
         1 => comparisons.remove(0),
         _ => {
-            // return Err(nom::Err::Failure(nom::error::Error::new(
-            //     input,
-            //     nom::error::ErrorKind::TooLarge,
-            // )))
             return Err(nom::Err::Failure(NomError::from_error_kind(
                 input,
                 ErrorKind::TooLarge,

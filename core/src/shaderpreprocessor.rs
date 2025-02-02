@@ -396,7 +396,7 @@ impl<'a> ShaderProcessor<'a> {
 
     pub fn from_parsed_shader_hashmap(
         shaders: HashMap<Cow<'a, str>, ParsedShader<'a>>,
-    ) -> Result<ShaderProcessor, ParseShaderError> {
+    ) -> Result<ShaderProcessor<'a>, ParseShaderError<'a>> {
         let mut exports = HashMap::new();
         for (name, parsed) in shaders.iter() {
             match parsed.get_exports(&mut exports) {
