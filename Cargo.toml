@@ -18,6 +18,10 @@ version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "A crate intended to make it easier to do general purpose GPU programming (GPGPU) in wgpu."
+exclude = [
+  "tests"
+]
+
 
 [dependencies]
 gpwgpu_core = { path = "core", version = "0.2.0" }
@@ -38,3 +42,4 @@ slow_primes.workspace = true
 
 [features]
 nightly = ["gpwgpu_macros/nightly"]
+
